@@ -4,16 +4,17 @@ import { readFileSync, writeFileSync } from 'node:fs';
 const databaseName = 'cloudflare-uptime-db';
 
 function run(args) {
-  return execFileSync('npx', ['wrangler', ...args], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'inherit'] });
+  const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+  return execFileSync(npx, ['wrangler', ...args], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'inherit'] });
 }
 
 function parseJson(output) {
-  const start = Math.min(...['[', '{'].map((character) => {
-    const index = output.indexOf(character);
-    return index < 0 ? Number.MAX_SAFE_INTEGER : index;
-  }));
-  if (!Number.isFinite(start)) return null;
-  try { return JSON.parse(output.slice(start)); } catch { return null; }
+  const clean = output.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
+  for (let index = 0; index < clean.length; index += 1) {
+    if (clean[index] !== '[' && clean[index] !== '{') continue;
+    try { return JSON.parse(clean.slice(index)); } catch { /* Try the next JSON boundary. */ }
+  }
+  return null;
 }
 
 function findDatabase(value) {
@@ -31,8 +32,9 @@ const databaseId = database?.uuid || database?.database_id || database?.id;
 if (!databaseId) throw new Error(`Unable to find D1 database: ${databaseName}`);
 
 const configPath = 'wrangler.jsonc';
-const config = readFileSync(configPath, 'utf8');
-const updated = config.replace(/("binding"\s*:\s*"DB"[\s\S]*?"database_id"\s*:\s*")[^"]+(")/, `$1${databaseId}$2`);
-if (updated === config) throw new Error('Could not update database_id in wrangler.jsonc');
-writeFileSync(configPath, updated);
-console.log(`Using D1 ${databaseName} (${databaseId})`);
+const config = JSON.parse(readFileSync(configPath, 'utf8'));
+const binding = config.d1_databases?.find((item) => item?.binding === 'DB');
+if (!binding) throw new Error('Could not find the DB D1 binding in wrangler.jsonc');
+binding.database_id = databaseId;
+writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+console.log(`Using D1 ${databaseName} (${databaseId}) for binding DB`);
