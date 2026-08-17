@@ -716,27 +716,39 @@ app.get('/api/nodes', async (c) => {
 app.post('/api/nodes/refresh', async (c) => {
   const auth = await requireAdminResponse(c);
   if (auth) return auth;
-  const nodes = await fetchNodes();
-  if (!nodes.length) return c.json({ error: 'Check-Host 没有返回节点' }, 502);
-  const statements = nodes.map((node) =>
-    c.env.DB.prepare(
-      `INSERT INTO probe_nodes (id, provider, country_code, country_name, city, ip, asn, enabled, last_seen_at)
-       VALUES (?1, 'check-host', ?2, ?3, ?4, ?5, ?6, 1, ?7)
-       ON CONFLICT(id) DO UPDATE SET
-         provider = 'check-host',
-         country_code = excluded.country_code,
-         country_name = excluded.country_name,
-         city = excluded.city,
-         ip = excluded.ip,
-         asn = excluded.asn,
-         enabled = 1,
-         last_seen_at = excluded.last_seen_at`,
-    ).bind(node.id, node.countryCode, node.countryName, node.city, node.ip, node.asn, node.lastSeenAt),
-  );
-  for (let index = 0; index < statements.length; index += 50) {
-    await c.env.DB.batch(statements.slice(index, index + 50));
+  let stage = 'fetchNodes';
+  try {
+    const nodes = await fetchNodes();
+    if (!nodes.length) return c.json({ error: 'Check-Host 没有返回节点' }, 502);
+    stage = 'writeNodes';
+    const statements = nodes.map((node) =>
+      c.env.DB.prepare(
+        `INSERT INTO probe_nodes (id, provider, country_code, country_name, city, ip, asn, enabled, last_seen_at)
+         VALUES (?1, 'check-host', ?2, ?3, ?4, ?5, ?6, 1, ?7)
+         ON CONFLICT(id) DO UPDATE SET
+           provider = 'check-host',
+           country_code = excluded.country_code,
+           country_name = excluded.country_name,
+           city = excluded.city,
+           ip = excluded.ip,
+           asn = excluded.asn,
+           enabled = 1,
+           last_seen_at = excluded.last_seen_at`,
+      ).bind(node.id, node.countryCode, node.countryName, node.city, node.ip, node.asn, node.lastSeenAt),
+    );
+    for (let index = 0; index < statements.length; index += 50) {
+      await c.env.DB.batch(statements.slice(index, index + 50));
+    }
+    stage = 'readNodes';
+    return c.json({ count: nodes.length, nodes: await listProbeNodes(c.env.DB) });
+  } catch (error) {
+    console.error('node refresh failed', error);
+    if (c.req.header('X-Uptime-Debug') === 'nodes') {
+      const detail = error instanceof Error ? error.message : String(error);
+      return c.json({ error: '服务器内部错误', stage, detail }, 500);
+    }
+    throw error;
   }
-  return c.json({ count: nodes.length, nodes: await listProbeNodes(c.env.DB) });
 });
 
 app.get('/api/globalping/locations', async (c) => {
