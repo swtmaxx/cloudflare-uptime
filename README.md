@@ -2,25 +2,25 @@
 
 一个从零设计的 Cloudflare Worker + D1 可用性监控系统。
 
-它使用 Worker 本地探测、Check-Host 和 Globalping 进行单点或多地区探测，后台和公开状态页都由同一个 Worker 提供。
+它使用 Worker 本地探测和 Globalping 进行单点或多地区探测，后台和公开状态页都由同一个 Worker 提供。
 
 ## 当前能力
 
 - Worker 直接执行 HTTP/HTTPS 和 TCP 端口检查
 - Worker HTTP 支持方法、请求头、请求体、成功状态码、响应关键字和超时
-- HTTP 监控可按监控选择 Worker、Check-Host 或 Globalping
-- Check-Host 支持固定节点；Globalping 支持国家/城市位置规则
+- HTTP 监控可按监控选择 Worker 或 Globalping
+- Globalping 支持国家/城市位置规则
 - Globalping HTTP 支持 GET、HEAD、OPTIONS、POST、PUT、PATCH、DELETE 的基础方法配置
 - 多数节点失败才判定为宕机
 - 每分钟 Cron 检查
-- 管理员登录、监控管理、节点缓存和历史记录
+- 管理员登录、监控管理和历史记录
 - 根路径入口可在仪表盘和已发布状态页之间选择，管理后台位于 `/admin`
 - 公开状态页
 - PushPlus 通知配置、监控绑定、测试通知和状态变化提醒
 
 通知只保存当前发送状态，不建立单独的故障事件历史。PushPlus Token 和 Globalping Token 由后台写入 D1，管理接口只返回是否已配置，不返回明文 Token。
 
-Check-Host 的公开接口不支持自定义请求头、Bearer Token、POST 请求体或响应内容断言。Globalping 在本版本中实现基础 HTTP 方法和多地区位置检查；需要 API 请求头、请求体或响应断言时使用 Worker 探测。
+Globalping 在本版本中实现基础 HTTP 方法和多地区位置检查；需要 API 请求头、请求体或响应断言时使用 Worker 探测。
 
 ## 本地运行
 
@@ -59,12 +59,10 @@ npm run deploy
 首次初始化后，系统设置页面中的默认值为：
 
 - 监控上限：50
-- 每个监控节点上限：5
+- 每个监控位置上限：5
 - 每轮调度任务上限：20
 - 历史记录保留：30 天
 
 PushPlus 通知在后台“通知设置”中配置。每个监控可以单独选择通知配置，并设置部分异常、宕机、恢复事件和连续异常次数；默认连续异常 3 次后通知。Globalping Token 在系统设置中配置。
-
-Check-Host 没有在公开文档中承诺固定免费调用额度。生产环境应根据实际返回的限流情况调整这些参数。
 
 Globalping 当前公开 API 配额由其服务端控制；未认证请求和认证请求的额度不同，超出额度会在后台记录为 provider 错误，不会直接判定监控目标宕机。

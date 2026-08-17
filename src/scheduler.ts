@@ -1,4 +1,3 @@
-import { getResults as getCheckHostResults, startCheck as startCheckHost } from './check-host';
 import { getAppSetting, getJob, getMonitor, getPendingJob, getSystemSettings, newId, nowIso } from './db';
 import { getGlobalpingResults, startGlobalpingCheck } from './globalping';
 import { processMonitorStatus } from './notifications';
@@ -90,12 +89,10 @@ export async function startMonitorJob(env: Env, monitorId: string): Promise<{ jo
 
   const pending = await getPendingJob(env.DB, monitorId);
   if (pending) return { jobId: null, error: '该监控已有检查任务正在等待结果' };
-  const hasTargets = monitor.provider === 'globalping'
-    ? monitor.globalpingLocations.length > 0
-    : monitor.provider === 'worker' || monitor.nodes.length > 0;
+  const hasTargets = monitor.provider === 'worker' || monitor.globalpingLocations.length > 0;
   if (!hasTargets) {
     await markUnknown(env, monitorId, nowIso(), '没有选择探测节点');
-    return { jobId: null, error: monitor.provider === 'globalping' ? '请至少选择一个 Globalping 探测位置' : '请至少选择一个探测节点' };
+    return { jobId: null, error: '请至少选择一个 Globalping 探测位置' };
   }
 
   const createdAt = nowIso();
@@ -116,9 +113,7 @@ export async function startMonitorJob(env: Env, monitorId: string): Promise<{ jo
       return { jobId };
     }
 
-    const requestId = monitor.provider === 'globalping'
-      ? await startGlobalpingCheck(env, monitor)
-      : await startCheckHost(monitor, monitor.nodes);
+    const requestId = await startGlobalpingCheck(env, monitor);
     await env.DB.batch([
       env.DB.prepare(
         `INSERT INTO check_jobs
@@ -177,10 +172,8 @@ export async function collectJob(env: Env, jobId: string): Promise<'completed' |
   }
 
   try {
-    const result = job.provider === 'globalping'
-      ? await getGlobalpingResults(env, job.request_id)
-      : await getCheckHostResults(monitor, monitor.nodes, job.request_id);
-    if (!result.ready || (job.provider === 'check-host' && result.results.length < monitor.nodes.length)) {
+    const result = await getGlobalpingResults(env, job.request_id);
+    if (!result.ready) {
       await env.DB.prepare(
         `UPDATE check_jobs
          SET poll_count = poll_count + 1, next_poll_at = ?1, error_message = NULL
@@ -208,7 +201,7 @@ async function collectPending(env: Env, maxJobs: number): Promise<number> {
   const { results } = await env.DB
     .prepare(
       `SELECT id FROM check_jobs
-       WHERE state = 'pending' AND provider != 'worker'
+       WHERE state = 'pending' AND provider = 'globalping'
          AND (next_poll_at IS NULL OR next_poll_at <= ?1)
        ORDER BY created_at LIMIT ${maxJobs}`,
     )

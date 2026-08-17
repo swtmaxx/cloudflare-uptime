@@ -4,7 +4,7 @@ export interface Env {
 }
 
 export type MonitorType = 'http' | 'tcp';
-export type MonitorProvider = 'worker' | 'check-host' | 'globalping';
+export type MonitorProvider = 'worker' | 'globalping';
 export type HttpMethod = 'GET' | 'HEAD' | 'OPTIONS' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 export type MonitorStatus = 'up' | 'degraded' | 'down' | 'unknown' | 'paused';
 export type JobState = 'pending' | 'completed' | 'provider_error' | 'expired';
@@ -140,7 +140,6 @@ export interface MonitorInput {
   url?: string;
   host?: string;
   port?: number;
-  nodeIds: string[];
   globalpingLocations?: GlobalpingLocation[];
   tagIds?: string[];
   enabled?: boolean;

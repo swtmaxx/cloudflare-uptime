@@ -10,7 +10,7 @@ export const statusLabel = (value: string): string => ({
 }[value] || '未知');
 
 export const typeLabel = (value: string): string => value === 'tcp' ? 'TCP' : 'HTTP';
-export const providerLabel = (value: string): string => value === 'worker' ? 'Worker' : value === 'globalping' ? 'Globalping' : 'Check-Host';
+export const providerLabel = (value: string): string => value === 'globalping' ? 'Globalping' : 'Worker';
 export const formatMs = (value: number | null | undefined): string => value === null || value === undefined ? '—' : `${value} ms`;
 export const formatDate = (value: string | null | undefined): string => value
   ? new Date(value).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A fresh Cloudflare Worker and D1 uptime monitor with Check-Host probes.",
+  "description": "A fresh Cloudflare Worker and D1 uptime monitor with Worker and Globalping probes.",
   "scripts": {
     "build:client": "node scripts/build-client.mjs",
     "build": "npm run build:client",

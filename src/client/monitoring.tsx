@@ -2,23 +2,22 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { api } from './api';
 import { Modal, TagChip } from './components';
 import { defaultNotificationRule, NotificationBindingsPanel, NotificationEditor } from './notifications';
-import type { GlobalpingLocation, Monitor, MonitorNotificationBinding, MonitorNotificationRule, MonitorNotificationSettings, NotificationChannel, ProbeNode, Tag } from './types';
+import type { GlobalpingLocation, Monitor, MonitorNotificationBinding, MonitorNotificationRule, MonitorNotificationSettings, NotificationChannel, Tag } from './types';
 import { globalpingKey } from './utils';
 
 type Notify = (message: string, error?: boolean) => void;
-type Provider = 'worker' | 'check-host' | 'globalping';
+type Provider = 'worker' | 'globalping';
 type HttpMethod = 'GET' | 'HEAD' | 'OPTIONS' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 interface MonitorFormProps {
   monitor: Monitor | null;
-  nodes: ProbeNode[];
   tags: Tag[];
   notify: Notify;
   onClose: () => void;
   onSaved: () => void;
 }
 
-export function MonitorForm({ monitor, nodes, tags, notify, onClose, onSaved }: MonitorFormProps): JSX.Element {
+export function MonitorForm({ monitor, tags, notify, onClose, onSaved }: MonitorFormProps): JSX.Element {
   const [name, setName] = useState(monitor?.name || '');
   const [type, setType] = useState<'http' | 'tcp'>(monitor?.type || 'http');
   const [provider, setProvider] = useState<Provider>(monitor?.provider || 'worker');
@@ -33,7 +32,6 @@ export function MonitorForm({ monitor, nodes, tags, notify, onClose, onSaved }: 
   const [expectedStatusCodes, setExpectedStatusCodes] = useState((monitor?.expectedStatusCodes || []).join(', '));
   const [responseKeyword, setResponseKeyword] = useState(monitor?.responseKeyword || '');
   const [enabled, setEnabled] = useState(monitor?.enabled !== 0);
-  const [nodeIds, setNodeIds] = useState<string[]>(monitor?.nodes.map((node) => node.id) || []);
   const [tagIds, setTagIds] = useState<string[]>(monitor?.tags?.map((tag) => tag.id) || []);
   const [locations, setLocations] = useState<GlobalpingLocation[]>(monitor?.globalpingLocations || []);
   const [knownLocations, setKnownLocations] = useState<GlobalpingLocation[]>([]);
@@ -110,7 +108,6 @@ export function MonitorForm({ monitor, nodes, tags, notify, onClose, onSaved }: 
       requestBody: type === 'http' && effectiveWorker ? requestBody : '',
       expectedStatusCodes: type === 'http' && effectiveWorker ? statuses : [],
       responseKeyword: type === 'http' && effectiveWorker ? responseKeyword : '',
-      nodeIds: type === 'tcp' || provider === 'check-host' ? nodeIds : [],
       globalpingLocations: effectiveGlobalping ? locations : [],
       tagIds,
       enabled,
@@ -155,8 +152,8 @@ export function MonitorForm({ monitor, nodes, tags, notify, onClose, onSaved }: 
               <div className="field full"><label>标签</label><div className="check-row">{tags.length ? tags.map((tag) => <label className="check-option" key={tag.id}><input type="checkbox" checked={tagIds.includes(tag.id)} onChange={() => toggle(tagIds, tag.id, setTagIds)} /><TagChip tag={tag} /></label>) : <span className="muted">还没有标签，可在监控管理中创建。</span>}</div></div>
               <div className="field"><label>类型</label><select value={type} onChange={(event) => setType(event.target.value as 'http' | 'tcp')}><option value="http">HTTP / HTTPS</option><option value="tcp">TCP 端口</option></select></div>
               <div className="field"><label>检查频率（分钟）</label><input value={intervalMinutes} onChange={(event) => setIntervalMinutes(event.target.value)} type="number" min="1" max="60" required /></div>
-              <div className="field"><label>探测服务</label><select value={provider} onChange={(event) => setProvider(event.target.value as Provider)}><option value="worker">Worker（本地）</option><option value="check-host">Check-Host（多地区）</option><option value="globalping">Globalping（多地区）</option></select></div>
-              {type === 'http' ? <div className="field"><label>HTTP 方法</label><select value={httpMethod} disabled={provider === 'check-host'} onChange={(event) => setHttpMethod(event.target.value as HttpMethod)}>{(['GET', 'HEAD', 'OPTIONS', 'POST', 'PUT', 'PATCH', 'DELETE'] as HttpMethod[]).map((method) => <option key={method} value={method}>{method}</option>)}</select></div> : <div className="field"><label>连接超时（秒）</label><input value={timeoutSeconds} onChange={(event) => setTimeoutSeconds(event.target.value)} type="number" min="1" max="30" required /></div>}
+              <div className="field"><label>探测服务</label><select value={provider} onChange={(event) => setProvider(event.target.value as Provider)}><option value="worker">Worker（本地）</option><option value="globalping">Globalping（多地区）</option></select></div>
+              {type === 'http' ? <div className="field"><label>HTTP 方法</label><select value={httpMethod} onChange={(event) => setHttpMethod(event.target.value as HttpMethod)}>{(['GET', 'HEAD', 'OPTIONS', 'POST', 'PUT', 'PATCH', 'DELETE'] as HttpMethod[]).map((method) => <option key={method} value={method}>{method}</option>)}</select></div> : <div className="field"><label>连接超时（秒）</label><input value={timeoutSeconds} onChange={(event) => setTimeoutSeconds(event.target.value)} type="number" min="1" max="30" required /></div>}
               {type === 'http' ? <div className="field full"><label>URL</label><input value={url} onChange={(event) => setUrl(event.target.value)} type="url" maxLength={2048} placeholder="https://example.com/health" required /></div> : <><div className="field"><label>主机</label><input value={host} onChange={(event) => setHost(event.target.value)} maxLength={253} placeholder="db.example.com" required /></div><div className="field"><label>端口</label><input value={port} onChange={(event) => setPort(event.target.value)} type="number" min="1" max="65535" placeholder="443" required /></div></>}
               {type === 'http' && effectiveWorker ? <>
                 <div className="field"><label>请求超时（秒）</label><input value={timeoutSeconds} onChange={(event) => setTimeoutSeconds(event.target.value)} type="number" min="1" max="30" required /></div>
@@ -166,13 +163,12 @@ export function MonitorForm({ monitor, nodes, tags, notify, onClose, onSaved }: 
                 <div className="field full"><label>响应关键字</label><input value={responseKeyword} onChange={(event) => setResponseKeyword(event.target.value)} maxLength={1000} placeholder="响应正文必须包含的文本，可留空" /></div>
               </> : null}
               {effectiveGlobalping ? <div className="field full"><label>Globalping 探测位置（最多由系统设置限制）</label><div className="node-picker">{mergedLocations.length ? mergedLocations.map((location) => <label className="node-option" key={globalpingKey(location)}><input type="checkbox" checked={selectedLocation(location)} onChange={() => setLocations(selectedLocation(location) ? locations.filter((item) => globalpingKey(item) !== globalpingKey(location)) : [...locations, { country: location.country, ...(location.city ? { city: location.city } : {}) }])} /><span><strong>{location.country} · {location.city || '全境'}</strong><div className="node-meta">{location.probes || 1} 个在线探针，按位置随机选择</div></span></label>) : <div className="notice warning">暂无可用 Globalping 位置，请稍后刷新重试。</div>}</div></div> : null}
-              {(type === 'tcp' && provider !== 'worker') || (type === 'http' && provider === 'check-host') ? <div className="field full"><label>Check-Host 探测节点</label><div className="node-picker">{nodes.length ? nodes.map((node) => <label className="node-option" key={node.id}><input type="checkbox" checked={nodeIds.includes(node.id)} onChange={() => toggle(nodeIds, node.id, setNodeIds)} /><span><strong>{node.countryName} · {node.city}</strong><div className="node-meta">{node.id} · {node.countryCode.toUpperCase()}</div></span></label>) : <div className="notice warning">暂无 Check-Host 节点，请先同步节点数据。</div>}</div></div> : null}
               <div className="field full"><label className="node-option" style={{ padding: 0, border: 0 }}><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span>创建后立即启用</span></label></div>
             </div>
           </div>
           <NotificationBindingsPanel channels={notificationBindings} rule={notificationRule} onBindingsChange={setNotificationBindings} onRuleChange={setNotificationRule} onManage={() => { setNotificationEditorChannel(null); setNotificationEditorOpen(true); }} onEdit={(channel) => { setNotificationEditorChannel(channel); setNotificationEditorOpen(true); }} />
         </div>
-        <div className="notice" style={{ marginTop: 18 }}>{effectiveWorker ? 'Worker 直接从 Cloudflare 发起 HTTP 或 TCP 检查，适合 API 和端口可用性。' : effectiveGlobalping ? 'Globalping 按国家和城市规则随机选择在线探针。' : 'Check-Host 使用已选择的固定节点。'} </div>
+        <div className="notice" style={{ marginTop: 18 }}>{effectiveWorker ? 'Worker 直接从 Cloudflare 发起 HTTP 或 TCP 检查，适合 API 和端口可用性。' : 'Globalping 按国家和城市规则随机选择在线探针。'} </div>
         <div className="form-actions"><button type="button" className="button ghost" onClick={onClose}>取消</button><button type="submit" className="button primary" disabled={busy || notificationLoading}>{notificationLoading ? '读取通知…' : monitor ? '保存修改' : '创建监控'}</button></div>
       </form>
     </Modal>

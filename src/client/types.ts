@@ -36,7 +36,7 @@ export interface Monitor {
   id: string;
   name: string;
   type: 'http' | 'tcp';
-  provider: 'worker' | 'check-host' | 'globalping';
+  provider: 'worker' | 'globalping';
   httpMethod: 'GET' | 'HEAD' | 'OPTIONS' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   targetUrl: string | null;
   requestHeaders: Record<string, string>;

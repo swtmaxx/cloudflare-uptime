@@ -241,7 +241,7 @@ export async function getMonitorTags(db: D1Database, monitorId: string): Promise
 export function toProbeNode(row: NodeRow): ProbeNode {
   return {
     id: row.id,
-    provider: row.provider || 'check-host',
+    provider: row.provider === 'globalping' ? 'globalping' : 'worker',
     countryCode: row.country_code,
     countryName: row.country_name,
     city: row.city,
@@ -252,47 +252,12 @@ export function toProbeNode(row: NodeRow): ProbeNode {
   };
 }
 
-export async function getProbeNode(db: D1Database, id: string): Promise<ProbeNode | null> {
-  const row = await db.prepare('SELECT * FROM probe_nodes WHERE id = ?1').bind(id).first<NodeRow>();
-  return row ? toProbeNode(row) : null;
-}
-
-export async function listProbeNodes(db: D1Database, search = ''): Promise<ProbeNode[]> {
-  const normalized = search.trim();
-  const statement = normalized
-    ? db
-        .prepare(
-          `SELECT * FROM probe_nodes
-           WHERE provider = 'check-host' AND enabled = 1
-             AND (id LIKE ?1 OR country_name LIKE ?1 OR city LIKE ?1 OR country_code LIKE ?1)
-           ORDER BY country_name, city, id`,
-        )
-        .bind(`%${normalized}%`)
-    : db.prepare("SELECT * FROM probe_nodes WHERE provider = 'check-host' AND enabled = 1 ORDER BY country_name, city, id");
-  const { results } = await statement.all<NodeRow>();
-  return results.map(toProbeNode);
-}
-
-export async function getSelectedNodes(db: D1Database, monitorId: string): Promise<ProbeNode[]> {
-  const { results } = await db
-    .prepare(
-      `SELECT p.*
-       FROM probe_nodes p
-       INNER JOIN monitor_nodes mn ON mn.node_id = p.id
-       WHERE mn.monitor_id = ?1
-       ORDER BY p.country_name, p.city, p.id`,
-    )
-    .bind(monitorId)
-    .all<NodeRow>();
-  return results.map(toProbeNode);
-}
-
-export function toMonitor(row: MonitorRow, nodes: ProbeNode[] = [], tags: Tag[] = []): Monitor {
+export function toMonitor(row: MonitorRow, tags: Tag[] = []): Monitor {
   return {
     id: row.id,
     name: row.name,
     type: row.type,
-    provider: row.provider || 'check-host',
+    provider: row.provider === 'globalping' ? 'globalping' : 'worker',
     httpMethod: row.http_method || 'GET',
     targetUrl: row.target_url,
     requestHeaders: parseHeaders(row.request_headers),
@@ -309,7 +274,7 @@ export function toMonitor(row: MonitorRow, nodes: ProbeNode[] = [], tags: Tag[] 
     lastCheckedAt: row.last_checked_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    nodes,
+    nodes: [],
     globalpingLocations: parseGlobalpingLocations(row.globalping_locations),
     tags,
   };
@@ -318,18 +283,14 @@ export function toMonitor(row: MonitorRow, nodes: ProbeNode[] = [], tags: Tag[] 
 export async function getMonitor(db: D1Database, id: string): Promise<Monitor | null> {
   const row = await db.prepare('SELECT * FROM monitors WHERE id = ?1').bind(id).first<MonitorRow>();
   if (!row) return null;
-  const [nodes, tags] = await Promise.all([getSelectedNodes(db, id), getMonitorTags(db, id)]);
-  return toMonitor(row, nodes, tags);
+  return toMonitor(row, await getMonitorTags(db, id));
 }
 
 export async function listMonitors(db: D1Database): Promise<Monitor[]> {
   const { results } = await db
     .prepare('SELECT * FROM monitors ORDER BY enabled DESC, name COLLATE NOCASE')
     .all<MonitorRow>();
-  return Promise.all(results.map(async (row) => {
-    const [nodes, tags] = await Promise.all([getSelectedNodes(db, row.id), getMonitorTags(db, row.id)]);
-    return toMonitor(row, nodes, tags);
-  }));
+  return Promise.all(results.map(async (row) => toMonitor(row, await getMonitorTags(db, row.id))));
 }
 
 export async function listHeartbeatSummaries(
@@ -400,7 +361,7 @@ export function toCheckJob(row: JobRow): CheckJob {
     id: row.id,
     monitorId: row.monitor_id,
     requestId: row.request_id,
-    provider: row.provider || 'check-host',
+    provider: row.provider === 'globalping' ? 'globalping' : 'worker',
     state: row.state,
     errorMessage: row.error_message,
     createdAt: row.created_at,
@@ -426,7 +387,7 @@ export function toCheckResult(row: ResultRow): CheckResult {
     node: row.node_id && row.node_provider
       ? {
           id: row.node_id,
-          provider: row.node_provider,
+          provider: row.node_provider === 'globalping' ? 'globalping' : 'worker',
           countryCode: row.node_country_code || '??',
           countryName: row.node_country_name || 'Unknown',
           city: row.node_city || 'Unknown',

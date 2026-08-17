@@ -14,18 +14,14 @@ import {
   validPassword,
   verifyAdminPassword,
 } from './auth';
-import { fetchNodes } from './check-host';
 import { fetchGlobalpingLocations } from './globalping';
 import {
   getMonitor,
   getAppSetting,
-  getProbeNode,
-  getSelectedNodes,
   getStatusPage,
   getStatusPageBySlug,
   getSystemSettings,
   listMonitors,
-  listProbeNodes,
   listResults,
   listStatusPages,
   listHeartbeatSummaries,
@@ -154,26 +150,9 @@ async function validateTagIds(env: Env, value: unknown): Promise<string[]> {
   return tagIds;
 }
 
-async function validateNodeIds(env: Env, value: unknown): Promise<string[]> {
-  if (!Array.isArray(value)) throw new ValidationError('必须选择探测节点');
-  const nodeIds = [...new Set(value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0))];
-  if (nodeIds.length < 1) throw new ValidationError('至少选择一个探测节点');
-  const limit = await maximumNodes(env);
-  if (nodeIds.length > limit) {
-    throw new ValidationError(`每个监控最多选择 ${limit} 个节点`);
-  }
-  const placeholders = nodeIds.map((_, index) => `?${index + 1}`).join(', ');
-  const { results } = await env.DB
-    .prepare(`SELECT id FROM probe_nodes WHERE provider = 'check-host' AND enabled = 1 AND id IN (${placeholders})`)
-    .bind(...nodeIds)
-    .all<{ id: string }>();
-  if (results.length !== nodeIds.length) throw new ValidationError('包含无效或已下线的探测节点，请刷新节点列表');
-  return nodeIds;
-}
-
 function providerField(value: unknown): MonitorProvider {
-  if (value === undefined) return 'check-host';
-  if (value !== 'worker' && value !== 'check-host' && value !== 'globalping') throw new ValidationError('探测服务只能是 Worker、Check-Host 或 Globalping');
+  if (value === undefined) return 'worker';
+  if (value !== 'worker' && value !== 'globalping') throw new ValidationError('探测服务只能是 Worker 或 Globalping');
   return value;
 }
 
@@ -254,7 +233,6 @@ async function parseMonitorInput(env: Env, body: Record<string, unknown>): Promi
     const responseKeyword = optionalTextField(body.responseKeyword, '响应关键字', 1000, '');
     const expectedStatusCodes = statusCodesField(body.expectedStatusCodes);
     const timeoutSeconds = integerField(body.timeoutSeconds === undefined ? 10 : body.timeoutSeconds, '请求超时', 1, 30);
-    if (provider === 'check-host' && httpMethod !== 'GET') throw new ValidationError('Check-Host HTTP 只支持 GET，请切换到 Worker 监控');
     if (provider === 'globalping' && (requestBody || Object.keys(requestHeaders).length || responseKeyword || expectedStatusCodes.length)) {
       throw new ValidationError('Globalping 当前只支持 URL、方法和位置，API 断言请切换到 Worker 监控');
     }
@@ -272,7 +250,6 @@ async function parseMonitorInput(env: Env, body: Record<string, unknown>): Promi
         intervalSeconds,
         url,
         targetUrl: parsed.toString(),
-        nodeIds: [],
         globalpingLocations: validateGlobalpingLocations(body.globalpingLocations, await maximumNodes(env)),
         tagIds,
         enabled,
@@ -291,7 +268,6 @@ async function parseMonitorInput(env: Env, body: Record<string, unknown>): Promi
       intervalSeconds,
       url,
       targetUrl: parsed.toString(),
-      nodeIds: provider === 'worker' ? [] : await validateNodeIds(env, body.nodeIds),
       globalpingLocations: [],
       tagIds,
       enabled,
@@ -315,7 +291,6 @@ async function parseMonitorInput(env: Env, body: Record<string, unknown>): Promi
     intervalSeconds,
     host,
     port,
-    nodeIds: provider === 'worker' ? [] : await validateNodeIds(env, body.nodeIds),
     globalpingLocations: [],
     tagIds,
     enabled,
@@ -611,7 +586,7 @@ app.use('/api/*', async (c, next) => {
   await next();
 });
 
-app.get('/api/health', (c) => c.json({ ok: true, providers: ['worker', 'check-host', 'globalping'] }));
+app.get('/api/health', (c) => c.json({ ok: true, providers: ['worker', 'globalping'] }));
 
 app.get('/api/auth/status', async (c) => {
   const user = await currentAdmin(c);
@@ -705,50 +680,6 @@ app.get('/api/dashboard', async (c) => {
     )
     .all();
   return c.json({ counts, monitors, recentResults });
-});
-
-app.get('/api/nodes', async (c) => {
-  const auth = await requireAdminResponse(c);
-  if (auth) return auth;
-  return c.json({ nodes: await listProbeNodes(c.env.DB, c.req.query('search') || '') });
-});
-
-app.post('/api/nodes/refresh', async (c) => {
-  const auth = await requireAdminResponse(c);
-  if (auth) return auth;
-  let stage = 'fetchNodes';
-  try {
-    const nodes = await fetchNodes();
-    if (!nodes.length) return c.json({ error: 'Check-Host 没有返回节点' }, 502);
-    stage = 'writeNodes';
-    const statements = nodes.map((node) =>
-      c.env.DB.prepare(
-        `INSERT INTO probe_nodes (id, provider, country_code, country_name, city, ip, asn, enabled, last_seen_at)
-         VALUES (?1, 'check-host', ?2, ?3, ?4, ?5, ?6, 1, ?7)
-         ON CONFLICT(id) DO UPDATE SET
-           provider = 'check-host',
-           country_code = excluded.country_code,
-           country_name = excluded.country_name,
-           city = excluded.city,
-           ip = excluded.ip,
-           asn = excluded.asn,
-           enabled = 1,
-           last_seen_at = excluded.last_seen_at`,
-      ).bind(node.id, node.countryCode, node.countryName, node.city, node.ip, node.asn, node.lastSeenAt),
-    );
-    for (let index = 0; index < statements.length; index += 50) {
-      await c.env.DB.batch(statements.slice(index, index + 50));
-    }
-    stage = 'readNodes';
-    return c.json({ count: nodes.length, nodes: await listProbeNodes(c.env.DB) });
-  } catch (error) {
-    console.error('node refresh failed', error);
-    if (c.req.header('X-Uptime-Debug') === 'nodes') {
-      const detail = error instanceof Error ? error.message : String(error);
-      return c.json({ error: '服务器内部错误', stage, detail }, 500);
-    }
-    throw error;
-  }
 });
 
 app.get('/api/globalping/locations', async (c) => {
@@ -983,9 +914,6 @@ app.post('/api/monitors', async (c) => {
       input.enabled ? 1 : 0,
       timestamp,
     ),
-    ...input.nodeIds.map((nodeId) =>
-      c.env.DB.prepare('INSERT INTO monitor_nodes (monitor_id, node_id) VALUES (?1, ?2)').bind(id, nodeId),
-    ),
     ...input.tagIds.map((tagId) =>
       c.env.DB.prepare('INSERT INTO monitor_tags (monitor_id, tag_id) VALUES (?1, ?2)').bind(id, tagId),
     ),
@@ -1046,10 +974,6 @@ app.patch('/api/monitors/:id', async (c) => {
       input.enabled ? 1 : 0,
       timestamp,
       monitorId,
-    ),
-    c.env.DB.prepare('DELETE FROM monitor_nodes WHERE monitor_id = ?1').bind(monitorId),
-    ...input.nodeIds.map((nodeId) =>
-      c.env.DB.prepare('INSERT INTO monitor_nodes (monitor_id, node_id) VALUES (?1, ?2)').bind(monitorId, nodeId),
     ),
     c.env.DB.prepare('DELETE FROM monitor_tags WHERE monitor_id = ?1').bind(monitorId),
     ...input.tagIds.map((tagId) =>
