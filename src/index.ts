@@ -351,6 +351,12 @@ async function requireAdminResponse(c: AppContext): Promise<Response | null> {
   return isResponse(result) ? result : null;
 }
 
+function notificationTestError(c: AppContext, error: unknown): Response {
+  const message = error instanceof Error ? error.message : 'PushPlus 测试失败';
+  console.warn(`[notifications] test failed: ${message}`);
+  return c.json({ error: message }, 502);
+}
+
 async function monitorStatusPageData(env: Env, monitorId: string) {
   const monitor = await getMonitor(env.DB, monitorId);
   if (!monitor) return null;
@@ -823,7 +829,31 @@ app.delete('/api/notifications/:id', async (c) => {
 app.post('/api/notifications/:id/test', async (c) => {
   const auth = await requireAdminResponse(c);
   if (auth) return auth;
-  await sendTestNotification(c.env, c.req.param('id'));
+  try {
+    await sendTestNotification(c.env, c.req.param('id'));
+  } catch (error) {
+    return notificationTestError(c, error);
+  }
+  return c.json({ ok: true });
+});
+
+app.post('/api/notifications/test', async (c) => {
+  const auth = await requireAdminResponse(c);
+  if (auth) return auth;
+  const body = await bodyObject(c);
+  if (body.type !== undefined && body.type !== 'pushplus') throw new ValidationError('通知类型只能是 PushPlus');
+  const channelId = body.channelId === undefined ? undefined : textField(body.channelId, '通知配置', 1, 128);
+  const name = body.name === undefined ? undefined : textField(body.name, '通知名称', 1, 80);
+  let token: string | undefined;
+  if (body.token !== undefined) {
+    if (typeof body.token !== 'string') throw new ValidationError('发送密钥必须是文本');
+    if (body.token.trim()) token = notificationTokenInput(body.token);
+  }
+  try {
+    await sendTestNotification(c.env, channelId, token, name);
+  } catch (error) {
+    return notificationTestError(c, error);
+  }
   return c.json({ ok: true });
 });
 

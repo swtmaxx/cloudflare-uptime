@@ -261,12 +261,21 @@ export async function sendPushPlusToken(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
   try {
-    const response = await fetch('https://www.pushplus.plus/send', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token, title, content, template: 'html' }),
-      signal: controller.signal,
-    });
+    let response: Response;
+    try {
+      response = await fetch('https://www.pushplus.plus/send', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token, title, content, template: 'html' }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error('PushPlus 请求超时（10 秒）');
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`无法连接 PushPlus：${message}`);
+    }
     const raw = await response.text();
     let data: { code?: number | string; msg?: string } = {};
     try {
@@ -274,9 +283,11 @@ export async function sendPushPlusToken(
     } catch {
       // PushPlus errors are still reported through the HTTP status when the body is not JSON.
     }
-    if (!response.ok) throw new Error(`PushPlus HTTP ${response.status}`);
+    if (!response.ok) {
+      throw new Error(`PushPlus HTTP ${response.status}${data.msg ? `：${data.msg}` : ''}`);
+    }
     if (data.code !== undefined && String(data.code) !== '200') {
-      throw new Error(data.msg || 'PushPlus 返回失败');
+      throw new Error(`PushPlus 返回失败（${data.code}）${data.msg ? `：${data.msg}` : ''}`);
     }
   } finally {
     clearTimeout(timeout);
@@ -414,14 +425,20 @@ export async function processMonitorStatus(
   });
 }
 
-export async function sendTestNotification(env: Env, channelId: string): Promise<void> {
-  const channel = await getNotificationChannelRow(env.DB, channelId);
-  if (!channel) throw new Error('通知配置不存在');
-  if (!channel.token_plaintext) throw new Error('PushPlus Token 尚未配置');
-  const token = channel.token_plaintext;
+export async function sendTestNotification(
+  env: Env,
+  channelId?: string,
+  tokenOverride?: string,
+  nameOverride?: string,
+): Promise<void> {
+  const channel = channelId ? await getNotificationChannelRow(env.DB, channelId) : null;
+  if (channelId && !channel) throw new Error('通知配置不存在');
+  const token = tokenOverride?.trim() || channel?.token_plaintext;
+  if (!token) throw new Error('PushPlus Token 尚未配置');
+  const name = nameOverride?.trim() || channel?.name || 'PushPlus 通知';
   await sendPushPlusToken(
     token,
-    `测试通知 · ${channel.name}`,
+    `测试通知 · ${name}`,
     '<strong>PushPlus 通知测试成功</strong><br>这是一条来自 Pulseboard 的测试消息。',
   );
 }

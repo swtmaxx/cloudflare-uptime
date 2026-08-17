@@ -58,10 +58,21 @@ export function NotificationEditor({
   };
 
   const test = async () => {
-    if (!channel) return;
+    if (!channel && !token.trim()) {
+      notify('请输入 PushPlus Token', true);
+      return;
+    }
     setBusy(true);
     try {
-      await api(`/api/notifications/${channel.id}/test`, { method: 'POST' });
+      await api('/api/notifications/test', {
+        method: 'POST',
+        body: JSON.stringify({
+          type: 'pushplus',
+          ...(channel ? { channelId: channel.id } : {}),
+          ...(token.trim() ? { token } : {}),
+          ...(name.trim() ? { name } : {}),
+        }),
+      });
       notify('测试通知已发送');
     } catch (reason) {
       notify(reason instanceof Error ? reason.message : '测试通知失败', true);
@@ -91,14 +102,14 @@ export function NotificationEditor({
         <div className="field full"><label>显示名称</label><input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} required /></div>
         <div className="field full"><label>发送密钥</label><div className="secret-input"><input value={token} onChange={(event) => setToken(event.target.value)} type={showToken ? 'text' : 'password'} placeholder={channel?.tokenConfigured ? '已保存，留空保持不变' : '输入 PushPlus Token'} maxLength={512} required={!channel} /><button className="secret-toggle" type="button" title={showToken ? '隐藏发送密钥' : '显示发送密钥'} aria-label={showToken ? '隐藏发送密钥' : '显示发送密钥'} onClick={() => setShowToken(!showToken)}>{showToken ? '隐藏' : '显示'}</button></div></div>
       </div>
-      <p className="field-note">更多信息：<a href="https://www.pushplus.plus/" target="_blank" rel="noreferrer">https://www.pushplus.plus/</a></p>
+      <p className="field-note">测试不会保存当前输入；编辑已有渠道时留空 Token 将使用已保存密钥。更多信息：<a href="https://www.pushplus.plus/" target="_blank" rel="noreferrer">https://www.pushplus.plus/</a></p>
       <div className="notification-options">
         <label className="toggle-option"><input type="checkbox" checked={defaultEnabled} onChange={(event) => setDefaultEnabled(event.target.checked)} /><span>默认开启</span></label>
         <p>新的监控将默认启用此通知，仍然可以在每个监控中单独关闭。</p>
         <label className="toggle-option"><input type="checkbox" checked={applyToExisting} onChange={(event) => setApplyToExisting(event.target.checked)} /><span>应用到所有现有监控</span></label>
         <p>保存时将此通知绑定到所有现有监控，并按默认开启状态设置。</p>
       </div>
-      <div className="form-actions notification-actions"><button className="button ghost danger" type="button" disabled={!channel || busy} onClick={remove}>删除</button><span className="form-action-right"><button className="button ghost" type="button" disabled={!channel || busy} onClick={test}>测试</button><button className="button primary" type="submit" disabled={busy}>{channel ? '保存' : '创建'}</button></span></div>
+      <div className="form-actions notification-actions"><button className="button ghost danger" type="button" disabled={!channel || busy} onClick={remove}>删除</button><span className="form-action-right"><button className="button ghost" type="button" disabled={busy} onClick={test}>测试</button><button className="button primary" type="submit" disabled={busy}>{channel ? '保存' : '创建'}</button></span></div>
     </form>
   </Modal>;
 }
