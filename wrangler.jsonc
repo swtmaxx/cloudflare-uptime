@@ -2,10 +2,14 @@
   "name": "cloudflare-uptime",
   "main": "src/index.ts",
   "compatibility_date": "2025-01-01",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "workers_dev": true,
   "triggers": {
-    "crons": ["* * * * *"]
+    "crons": [
+      "* * * * *"
+    ]
   },
   "assets": {
     "directory": "dist",
@@ -16,14 +20,16 @@
     {
       "binding": "DB",
       "database_name": "cloudflare-uptime-db",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "432fe77f-b10a-4cfe-a251-db805f1423c5",
       "migrations_dir": "migrations"
     }
   ],
   "rules": [
     {
       "type": "Text",
-      "globs": ["**/*.html"],
+      "globs": [
+        "**/*.html"
+      ],
       "fallthrough": true
     }
   ]
