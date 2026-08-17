@@ -52,6 +52,7 @@ npm run deploy
 ```
 
 也可以使用 `.github/workflows/deploy.yml`。GitHub Actions 只需要 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID` 两个仓库 Secret；工作流会自动查找或创建 D1、执行迁移、构建并部署 Worker。
+首次成功部署后，工作流会把实际 D1 ID 回写到 `wrangler.jsonc`，避免其他部署方式继续使用占位 ID。
 
 ## 运行参数
 
