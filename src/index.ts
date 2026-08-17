@@ -624,9 +624,20 @@ app.post('/api/auth/setup', async (c) => {
   const username = textField(body.username, '用户名', 3, 64);
   const password = body.password;
   if (!validPassword(password)) throw new ValidationError('密码长度必须为 8-128 个字符');
-  const user = await createAdmin(c.env, username, password);
-  await startSession(c, user.id);
-  return c.json({ user }, 201);
+  let stage = 'createAdmin';
+  try {
+    const user = await createAdmin(c.env, username, password);
+    stage = 'startSession';
+    await startSession(c, user.id);
+    return c.json({ user }, 201);
+  } catch (error) {
+    console.error('auth setup failed', error);
+    if (c.req.header('X-Uptime-Debug') === 'auth') {
+      const detail = error instanceof Error ? error.message : String(error);
+      return c.json({ error: '服务器内部错误', stage, detail }, 500);
+    }
+    throw error;
+  }
 });
 
 app.post('/api/auth/login', async (c) => {
