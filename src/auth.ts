@@ -4,7 +4,7 @@ import type { Env } from './types';
 
 const SESSION_COOKIE = 'uptime_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
-const PBKDF2_ITERATIONS = 120_000;
+const PBKDF2_ITERATIONS = 100_000;
 
 export interface AdminUser {
   id: string;
