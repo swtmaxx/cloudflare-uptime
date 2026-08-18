@@ -16,9 +16,9 @@
 - 管理员登录、监控管理和历史记录
 - 根路径入口可在仪表盘和已发布状态页之间选择，管理后台位于 `/admin`
 - 公开状态页
-- PushPlus 通知配置、监控绑定、测试通知和状态变化提醒
+- PushPlus 和 QQ 官方机器人通知配置、监控绑定、测试通知和状态变化提醒
 
-通知只保存当前发送状态，不建立单独的故障事件历史。PushPlus Token 和 Globalping Token 由后台写入 D1，管理接口只返回是否已配置，不返回明文 Token。
+通知只保存当前发送状态，不建立单独的故障事件历史。PushPlus Token、QQ AppSecret、QQ Bot Secret 和 Globalping Token 由后台写入 D1，管理接口只返回是否已配置，不返回明文密钥。
 
 Globalping 在本版本中实现基础 HTTP 方法和多地区位置检查；需要 API 请求头、请求体或响应断言时使用 Worker 探测。
 
@@ -64,5 +64,15 @@ npm run deploy
 - 历史记录保留：30 天
 
 PushPlus 通知在后台“通知设置”中配置。每个监控可以单独选择通知配置，并设置部分异常、宕机、恢复事件和连续异常次数；默认连续异常 3 次后通知。Globalping Token 在系统设置中配置。
+
+QQ 通知使用 QQ 官方机器人 Open Platform，仅支持 QQ 私聊。创建 QQ 渠道时填写 AppID、AppSecret 和 Bot Secret，保存后可以在通知编辑页生成官方添加链接二维码。用户扫码并确认后，若 QQ 回调已配置，`FRIEND_ADD` 或 `C2C_MESSAGE_CREATE` 会自动登记 OpenID；也可以在后台手动填写 OpenID。
+
+QQ 开放平台的回调地址填写为：
+
+```text
+https://<你的 Worker 域名>/api/notifications/<QQ 渠道 ID>/qq/webhook
+```
+
+并订阅 `GROUP_AND_C2C_EVENT`。系统会处理 QQ 的回调地址验证、用户添加、用户删除和私聊消息事件。QQ 渠道的每个启用用户独立记录发送状态，失败会按 60 秒间隔最多重试 3 次。
 
 Globalping 当前公开 API 配额由其服务端控制；未认证请求和认证请求的额度不同，超出额度会在后台记录为 provider 错误，不会直接判定监控目标宕机。

@@ -12,6 +12,7 @@ export type ThemeMode = 'light' | 'dark' | 'auto';
 export type TimeDisplay = 'relative' | 'absolute';
 export type HeartbeatPosition = 'top' | 'bottom';
 export type NotificationEventType = 'degraded' | 'down' | 'recovery';
+export type NotificationChannelType = 'pushplus' | 'qqbot';
 
 export interface GlobalpingLocation {
   country: string;
@@ -155,10 +156,14 @@ export interface SystemSettings {
 
 export interface NotificationChannel {
   id: string;
-  type: 'pushplus';
+  type: NotificationChannelType;
   name: string;
   defaultEnabled: number;
   tokenConfigured: boolean;
+  appId: string | null;
+  appSecretConfigured: boolean;
+  botSecretConfigured: boolean;
+  userCount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -174,7 +179,7 @@ export interface MonitorNotificationRule {
 export interface MonitorNotificationBinding {
   channelId: string;
   name: string;
-  type: 'pushplus';
+  type: NotificationChannelType;
   defaultEnabled: number;
   enabled: number;
 }

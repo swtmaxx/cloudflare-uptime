@@ -64,7 +64,7 @@ export function MonitorForm({ monitor, tags, notify, onClose, onSaved }: Monitor
         setNotificationBindings(data.channels || []);
         setNotificationRule(data.rule || { ...defaultNotificationRule });
       } else {
-        const data = await api<{ channels: Array<{ id: string; name: string; type: 'pushplus'; defaultEnabled: number }> }>('/api/notifications');
+        const data = await api<{ channels: NotificationChannel[] }>('/api/notifications');
         setNotificationBindings((data.channels || []).map((channel) => ({ channelId: channel.id, name: channel.name, type: channel.type, defaultEnabled: channel.defaultEnabled, enabled: channel.defaultEnabled })));
       }
     } catch (reason) {
@@ -166,7 +166,7 @@ export function MonitorForm({ monitor, tags, notify, onClose, onSaved }: Monitor
               <div className="field full"><label className="node-option" style={{ padding: 0, border: 0 }}><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span>创建后立即启用</span></label></div>
             </div>
           </div>
-          <NotificationBindingsPanel channels={notificationBindings} rule={notificationRule} onBindingsChange={setNotificationBindings} onRuleChange={setNotificationRule} onManage={() => { setNotificationEditorChannel(null); setNotificationEditorOpen(true); }} onEdit={(channel) => { setNotificationEditorChannel(channel); setNotificationEditorOpen(true); }} />
+          <NotificationBindingsPanel channels={notificationBindings} rule={notificationRule} onBindingsChange={setNotificationBindings} onRuleChange={setNotificationRule} onManage={() => { setNotificationEditorChannel(null); setNotificationEditorOpen(true); }} onEdit={async (channelId) => { try { const data = await api<{ channels: NotificationChannel[] }>('/api/notifications'); const channel = data.channels.find((item) => item.id === channelId); if (!channel) { notify('通知配置不存在', true); return; } setNotificationEditorChannel(channel); setNotificationEditorOpen(true); } catch (reason) { notify(reason instanceof Error ? reason.message : '无法读取通知配置', true); } }} />
         </div>
         <div className="notice" style={{ marginTop: 18 }}>{effectiveWorker ? 'Worker 直接从 Cloudflare 发起 HTTP 或 TCP 检查，适合 API 和端口可用性。' : 'Globalping 按国家和城市规则随机选择在线探针。'} </div>
         <div className="form-actions"><button type="button" className="button ghost" onClick={onClose}>取消</button><button type="submit" className="button primary" disabled={busy || notificationLoading}>{notificationLoading ? '读取通知…' : monitor ? '保存修改' : '创建监控'}</button></div>

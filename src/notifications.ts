@@ -1,5 +1,11 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { nowIso } from './db';
+import {
+  listQQUsers,
+  qqChannelConfigured,
+  sendQQDirectMessage,
+  type QQChannelRow,
+} from './qqbot';
 import type {
   Env,
   Monitor,
@@ -7,17 +13,24 @@ import type {
   MonitorNotificationRule,
   MonitorStatus,
   NotificationChannel,
+  NotificationChannelType,
   NotificationEventType,
 } from './types';
 
-type NotificationChannelRow = {
+export type NotificationChannelRow = {
   id: string;
-  type: 'pushplus';
+  type: NotificationChannelType;
   name: string;
   token_plaintext: string;
   default_enabled: number;
+  qq_app_id: string | null;
+  qq_app_secret: string | null;
+  qq_bot_secret: string | null;
+  qq_access_token: string | null;
+  qq_access_token_expires_at: number | null;
   created_at: string;
   updated_at: string;
+  qq_user_count?: number;
 };
 
 type NotificationBindingRow = {
@@ -28,10 +41,15 @@ type NotificationBindingRow = {
   last_attempt_at: string | null;
   retry_count: number;
   last_error: string | null;
-  channel_type: 'pushplus';
+  channel_type: NotificationChannelType;
   channel_name: string;
   channel_default_enabled: number;
   token_plaintext: string;
+  qq_app_id: string | null;
+  qq_app_secret: string | null;
+  qq_bot_secret: string | null;
+  qq_access_token: string | null;
+  qq_access_token_expires_at: number | null;
 };
 
 type NotificationRuleRow = {
@@ -50,6 +68,29 @@ type NotificationRuleRow = {
   updated_at: string;
 };
 
+type QQDeliveryRow = {
+  monitor_id: string;
+  channel_id: string;
+  user_id: string;
+  openid: string;
+  nickname: string | null;
+  last_event_key: string | null;
+  last_attempt_at: string | null;
+  retry_count: number;
+  last_error: string | null;
+};
+
+export interface TestNotificationInput {
+  channelId?: string;
+  type?: NotificationChannelType;
+  token?: string;
+  name?: string;
+  qqAppId?: string;
+  qqAppSecret?: string;
+  qqBotSecret?: string;
+  qqOpenId?: string;
+}
+
 const DEFAULT_FAILURE_THRESHOLD = 3;
 const MAX_NOTIFICATION_RETRIES = 3;
 const NOTIFICATION_RETRY_INTERVAL_MS = 60_000;
@@ -57,10 +98,14 @@ const NOTIFICATION_RETRY_INTERVAL_MS = 60_000;
 function toChannel(row: NotificationChannelRow): NotificationChannel {
   return {
     id: row.id,
-    type: 'pushplus',
+    type: row.type,
     name: row.name,
     defaultEnabled: row.default_enabled,
-    tokenConfigured: Boolean(row.token_plaintext),
+    tokenConfigured: row.type === 'pushplus' && Boolean(row.token_plaintext),
+    appId: row.type === 'qqbot' ? row.qq_app_id : null,
+    appSecretConfigured: row.type === 'qqbot' && Boolean(row.qq_app_secret),
+    botSecretConfigured: row.type === 'qqbot' && Boolean(row.qq_bot_secret),
+    userCount: row.type === 'qqbot' ? Number(row.qq_user_count || 0) : 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -80,15 +125,26 @@ function toBinding(row: NotificationBindingRow): MonitorNotificationBinding {
   return {
     channelId: row.channel_id,
     name: row.channel_name,
-    type: 'pushplus',
+    type: row.channel_type,
     defaultEnabled: row.channel_default_enabled,
     enabled: row.enabled,
   };
 }
 
+function toQQChannel(row: Pick<NotificationChannelRow, 'id' | 'type' | 'name' | 'qq_app_id' | 'qq_app_secret' | 'qq_bot_secret' | 'qq_access_token' | 'qq_access_token_expires_at'>): QQChannelRow {
+  if (row.type !== 'qqbot') throw new Error('通知配置不是 QQ 机器人');
+  return { ...row, type: 'qqbot' };
+}
+
 export async function listNotificationChannels(db: D1Database): Promise<NotificationChannel[]> {
   const { results } = await db
-    .prepare('SELECT * FROM notification_channels ORDER BY name COLLATE NOCASE, id')
+    .prepare(
+      `SELECT c.*,
+              (SELECT COUNT(*) FROM qq_notification_users u
+               WHERE u.channel_id = c.id AND u.enabled = 1) AS qq_user_count
+       FROM notification_channels c
+       ORDER BY c.name COLLATE NOCASE, c.id`,
+    )
     .all<NotificationChannelRow>();
   return results.map(toChannel);
 }
@@ -117,7 +173,9 @@ async function listBindingRows(db: D1Database, monitorId: string): Promise<Notif
   const { results } = await db
     .prepare(
       `SELECT b.*, c.type AS channel_type, c.name AS channel_name,
-              c.default_enabled AS channel_default_enabled, c.token_plaintext
+              c.default_enabled AS channel_default_enabled, c.token_plaintext,
+              c.qq_app_id, c.qq_app_secret, c.qq_bot_secret,
+              c.qq_access_token, c.qq_access_token_expires_at
        FROM monitor_notification_bindings b
        INNER JOIN notification_channels c ON c.id = b.channel_id
        WHERE b.monitor_id = ?1
@@ -142,7 +200,7 @@ export async function getMonitorNotificationSettings(db: D1Database, monitorId: 
       return {
         channelId: channel.id,
         name: channel.name,
-        type: 'pushplus' as const,
+        type: channel.type,
         defaultEnabled: channel.default_enabled,
         enabled: binding?.enabled || 0,
       };
@@ -253,6 +311,28 @@ function statusText(eventType: NotificationEventType): string {
   return eventType === 'recovery' ? '恢复正常' : eventType === 'down' ? '宕机' : '部分异常';
 }
 
+function notificationContent(monitor: Monitor, eventType: NotificationEventType, checkedAt: string): { html: string; text: string; title: string } {
+  const state = statusText(eventType);
+  const target = monitor.targetUrl || `${monitor.host || ''}:${monitor.port || ''}`;
+  return {
+    title: `${state} · ${monitor.name}`,
+    html: [
+      `<strong>${escapeHtml(state)}</strong>`,
+      `<br>监控：${escapeHtml(monitor.name)}`,
+      `<br>目标：${escapeHtml(target)}`,
+      `<br>类型：${escapeHtml(monitor.type.toUpperCase())} · ${escapeHtml(monitor.provider)}`,
+      `<br>检查时间：${escapeHtml(checkedAt)}`,
+    ].join(''),
+    text: [
+      `[Pulseboard] ${state}`,
+      `监控：${monitor.name}`,
+      `目标：${target}`,
+      `类型：${monitor.type.toUpperCase()} · ${monitor.provider}`,
+      `检查时间：${checkedAt}`,
+    ].join('\n'),
+  };
+}
+
 export async function sendPushPlusToken(
   token: string,
   title: string,
@@ -294,13 +374,95 @@ export async function sendPushPlusToken(
   }
 }
 
+function dispatchable(binding: NotificationBindingRow): boolean {
+  if (binding.channel_type === 'pushplus') return Boolean(binding.token_plaintext);
+  return qqChannelConfigured(toQQChannel({
+    id: binding.channel_id,
+    type: 'qqbot',
+    name: binding.channel_name,
+    qq_app_id: binding.qq_app_id,
+    qq_app_secret: binding.qq_app_secret,
+    qq_bot_secret: binding.qq_bot_secret,
+    qq_access_token: binding.qq_access_token,
+    qq_access_token_expires_at: binding.qq_access_token_expires_at,
+  }));
+}
+
+async function ensureQQDeliveryRows(env: Env, monitorId: string, channelId: string): Promise<void> {
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO monitor_notification_user_deliveries (monitor_id, channel_id, user_id)
+     SELECT ?1, ?2, id FROM qq_notification_users
+     WHERE channel_id = ?2`,
+  ).bind(monitorId, channelId).run();
+}
+
+async function dispatchQQBinding(
+  env: Env,
+  monitor: Monitor,
+  binding: NotificationBindingRow,
+  eventKey: string,
+  content: string,
+  attemptAt: number,
+): Promise<void> {
+  await ensureQQDeliveryRows(env, monitor.id, binding.channel_id);
+  const { results } = await env.DB.prepare(
+    `SELECT d.*, u.openid, u.nickname
+     FROM monitor_notification_user_deliveries d
+     INNER JOIN qq_notification_users u ON u.id = d.user_id
+     WHERE d.monitor_id = ?1 AND d.channel_id = ?2 AND u.enabled = 1
+     ORDER BY u.updated_at DESC, u.id`,
+  ).bind(monitor.id, binding.channel_id).all<QQDeliveryRow>();
+  const channel = toQQChannel({
+    id: binding.channel_id,
+    type: 'qqbot',
+    name: binding.channel_name,
+    qq_app_id: binding.qq_app_id,
+    qq_app_secret: binding.qq_app_secret,
+    qq_bot_secret: binding.qq_bot_secret,
+    qq_access_token: binding.qq_access_token,
+    qq_access_token_expires_at: binding.qq_access_token_expires_at,
+  });
+  for (const delivery of results) {
+    if (delivery.last_event_key === eventKey || delivery.retry_count >= MAX_NOTIFICATION_RETRIES) continue;
+    if (delivery.last_attempt_at && attemptAt - Date.parse(delivery.last_attempt_at) < NOTIFICATION_RETRY_INTERVAL_MS) continue;
+    try {
+      await sendQQDirectMessage(env.DB, channel, delivery.openid, content);
+      await env.DB.prepare(
+        `UPDATE monitor_notification_user_deliveries
+         SET last_event_key = ?1, last_attempt_at = ?2, retry_count = 0, last_error = NULL
+         WHERE monitor_id = ?3 AND channel_id = ?4 AND user_id = ?5`,
+      ).bind(eventKey, nowIso(), monitor.id, binding.channel_id, delivery.user_id).run();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'QQ 发送失败';
+      await env.DB.prepare(
+        `UPDATE monitor_notification_user_deliveries
+         SET last_attempt_at = ?1, retry_count = retry_count + 1, last_error = ?2
+         WHERE monitor_id = ?3 AND channel_id = ?4 AND user_id = ?5`,
+      ).bind(nowIso(), message.slice(0, 500), monitor.id, binding.channel_id, delivery.user_id).run();
+      console.warn(`[notifications] QQ channel ${binding.channel_id}, user ${delivery.user_id}: ${message}`);
+    }
+  }
+}
+
+async function qqDeliveryPending(env: Env, monitorId: string, channelId: string, eventKey: string): Promise<boolean> {
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS count
+     FROM monitor_notification_user_deliveries d
+     INNER JOIN qq_notification_users u ON u.id = d.user_id
+     WHERE d.monitor_id = ?1 AND d.channel_id = ?2 AND u.enabled = 1
+       AND (d.last_event_key IS NULL OR d.last_event_key != ?3)
+       AND d.retry_count < ?4`,
+  ).bind(monitorId, channelId, eventKey, MAX_NOTIFICATION_RETRIES).first<{ count: number }>();
+  return Number(row?.count || 0) > 0;
+}
+
 async function dispatchPendingNotification(
   env: Env,
   monitor: Monitor,
   rule: NotificationRuleRow,
 ): Promise<void> {
   if (!rule.pending_event_key || !rule.pending_event_type || rule.enabled !== 1) return;
-  const bindings = (await listBindingRows(env.DB, monitor.id)).filter((binding) => binding.enabled === 1 && binding.token_plaintext);
+  const bindings = (await listBindingRows(env.DB, monitor.id)).filter((binding) => binding.enabled === 1 && dispatchable(binding));
   if (!bindings.length) {
     await env.DB.prepare(
       `UPDATE monitor_notification_rules
@@ -312,21 +474,17 @@ async function dispatchPendingNotification(
 
   const eventType = rule.pending_event_type;
   const checkedAt = rule.pending_checked_at || nowIso();
-  const title = `${statusText(eventType)} · ${monitor.name}`;
-  const target = monitor.targetUrl || `${monitor.host || ''}:${monitor.port || ''}`;
-  const content = [
-    `<strong>${escapeHtml(statusText(eventType))}</strong>`,
-    `<br>监控：${escapeHtml(monitor.name)}`,
-    `<br>目标：${escapeHtml(target)}`,
-    `<br>类型：${escapeHtml(monitor.type.toUpperCase())} · ${escapeHtml(monitor.provider)}`,
-    `<br>检查时间：${escapeHtml(checkedAt)}`,
-  ].join('');
+  const payload = notificationContent(monitor, eventType, checkedAt);
   const attemptAt = Date.now();
   for (const binding of bindings) {
+    if (binding.channel_type === 'qqbot') {
+      await dispatchQQBinding(env, monitor, binding, rule.pending_event_key, payload.text, attemptAt);
+      continue;
+    }
     if (binding.last_event_key === rule.pending_event_key || binding.retry_count >= MAX_NOTIFICATION_RETRIES) continue;
     if (binding.last_attempt_at && attemptAt - Date.parse(binding.last_attempt_at) < NOTIFICATION_RETRY_INTERVAL_MS) continue;
     try {
-      await sendPushPlusToken(binding.token_plaintext, title, content);
+      await sendPushPlusToken(binding.token_plaintext, payload.title, payload.html);
       await env.DB.prepare(
         `UPDATE monitor_notification_bindings
          SET last_event_key = ?1, last_attempt_at = ?2, retry_count = 0, last_error = NULL
@@ -343,12 +501,11 @@ async function dispatchPendingNotification(
     }
   }
 
-  const remaining = (await listBindingRows(env.DB, monitor.id)).filter((binding) => (
-    binding.enabled === 1
-      && binding.last_event_key !== rule.pending_event_key
-      && binding.retry_count < MAX_NOTIFICATION_RETRIES
-  ));
-  if (!remaining.length) {
+  const remaining = await Promise.all((await listBindingRows(env.DB, monitor.id)).filter((binding) => binding.enabled === 1 && dispatchable(binding)).map(async (binding) => {
+    if (binding.channel_type === 'qqbot') return qqDeliveryPending(env, monitor.id, binding.channel_id, rule.pending_event_key as string);
+    return binding.last_event_key !== rule.pending_event_key && binding.retry_count < MAX_NOTIFICATION_RETRIES;
+  }));
+  if (!remaining.some(Boolean)) {
     await env.DB.prepare(
       `UPDATE monitor_notification_rules
        SET pending_event_key = NULL, pending_event_type = NULL, pending_checked_at = NULL, updated_at = ?1
@@ -425,20 +582,42 @@ export async function processMonitorStatus(
   });
 }
 
-export async function sendTestNotification(
-  env: Env,
-  channelId?: string,
-  tokenOverride?: string,
-  nameOverride?: string,
-): Promise<void> {
-  const channel = channelId ? await getNotificationChannelRow(env.DB, channelId) : null;
-  if (channelId && !channel) throw new Error('通知配置不存在');
-  const token = tokenOverride?.trim() || channel?.token_plaintext;
-  if (!token) throw new Error('PushPlus Token 尚未配置');
-  const name = nameOverride?.trim() || channel?.name || 'PushPlus 通知';
-  await sendPushPlusToken(
-    token,
-    `测试通知 · ${name}`,
-    '<strong>PushPlus 通知测试成功</strong><br>这是一条来自 Pulseboard 的测试消息。',
-  );
+export async function sendTestNotification(env: Env, input: TestNotificationInput): Promise<void> {
+  const channel = input.channelId ? await getNotificationChannelRow(env.DB, input.channelId) : null;
+  if (input.channelId && !channel) throw new Error('通知配置不存在');
+  const type = input.type || channel?.type || 'pushplus';
+  const name = input.name?.trim() || channel?.name || (type === 'qqbot' ? 'QQ 机器人通知' : 'PushPlus 通知');
+  if (type === 'pushplus') {
+    const token = input.token?.trim() || channel?.token_plaintext;
+    if (!token) throw new Error('PushPlus Token 尚未配置');
+    await sendPushPlusToken(token, `测试通知 · ${name}`, '<strong>PushPlus 通知测试成功</strong><br>这是一条来自 Pulseboard 的测试消息。');
+    return;
+  }
+
+  if (channel && channel.type !== 'qqbot') throw new Error('通知配置类型不匹配');
+  const qqChannel: QQChannelRow = {
+    id: channel?.id || 'test-qqbot',
+    type: 'qqbot',
+    name,
+    qq_app_id: input.qqAppId?.trim() || channel?.qq_app_id || null,
+    qq_app_secret: input.qqAppSecret?.trim() || channel?.qq_app_secret || null,
+    qq_bot_secret: input.qqBotSecret?.trim() || channel?.qq_bot_secret || null,
+    qq_access_token: channel?.qq_access_token || null,
+    qq_access_token_expires_at: channel?.qq_access_token_expires_at || null,
+  };
+  const openids = input.qqOpenId?.trim()
+    ? [input.qqOpenId.trim()]
+    : channel
+      ? (await listQQUsers(env.DB, channel.id, false)).map((user) => user.openid)
+      : [];
+  if (!openids.length) throw new Error('请先添加至少一个 QQ 用户 OpenID，或在测试时填写 OpenID');
+  const errors: string[] = [];
+  for (const openid of openids) {
+    try {
+      await sendQQDirectMessage(env.DB, qqChannel, openid, `[Pulseboard] 测试通知\n渠道：${name}\nQQ 私聊通知配置已生效。`);
+    } catch (error) {
+      errors.push(error instanceof Error ? `${openid}：${error.message}` : `${openid}：QQ 发送失败`);
+    }
+  }
+  if (errors.length) throw new Error(errors.join('；'));
 }

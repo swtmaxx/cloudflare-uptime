@@ -40,6 +40,15 @@ import {
   saveMonitorNotificationSettings,
   sendTestNotification,
 } from './notifications';
+import {
+  deleteQQUser,
+  generateQQAddLink,
+  listQQUsers,
+  setQQUserEnabled,
+  signQQValidation,
+  upsertQQUser,
+  verifyQQWebhookSignature,
+} from './qqbot';
 import type {
   Env,
   GlobalpingLocation,
@@ -48,6 +57,7 @@ import type {
   MonitorInput,
   MonitorProvider,
   MonitorNotificationRule,
+  NotificationChannelType,
   StatusPage,
   StatusPageGroup,
   ThemeMode,
@@ -346,13 +356,27 @@ function notificationTokenInput(value: unknown): string {
   return textField(value, '发送密钥', 1, 512);
 }
 
+function notificationTypeInput(value: unknown, fallback: NotificationChannelType = 'pushplus'): NotificationChannelType {
+  if (value === undefined) return fallback;
+  if (value !== 'pushplus' && value !== 'qqbot') throw new ValidationError('通知类型只能是 PushPlus 或 QQ 机器人');
+  return value;
+}
+
+function qqAppIdInput(value: unknown): string {
+  return textField(value, 'QQ AppID', 1, 128);
+}
+
+function qqSecretInput(value: unknown, field: string): string {
+  return textField(value, field, 1, 512);
+}
+
 async function requireAdminResponse(c: AppContext): Promise<Response | null> {
   const result = await requireAdmin(c);
   return isResponse(result) ? result : null;
 }
 
 function notificationTestError(c: AppContext, error: unknown): Response {
-  const message = error instanceof Error ? error.message : 'PushPlus 测试失败';
+  const message = error instanceof Error ? error.message : '通知测试失败';
   console.warn(`[notifications] test failed: ${message}`);
   return c.json({ error: message }, 502);
 }
@@ -592,6 +616,67 @@ app.use('/api/*', async (c, next) => {
   await next();
 });
 
+// QQ calls this endpoint without the admin session. The channel-specific URL
+// keeps the public callback scoped to one bot, while the Bot Secret authenticates every payload.
+app.post('/api/notifications/:id/qq/webhook', async (c) => {
+  const channel = await getNotificationChannelRow(c.env.DB, c.req.param('id'));
+  if (!channel || channel.type !== 'qqbot') return c.json({ error: 'QQ 通知配置不存在' }, 404);
+  const callbackAppId = c.req.header('X-Bot-Appid');
+  if (callbackAppId && channel.qq_app_id && callbackAppId !== channel.qq_app_id) {
+    return c.json({ error: 'QQ 回调 AppID 不匹配' }, 401);
+  }
+  const rawBody = await c.req.text();
+  let payload: Record<string, unknown>;
+  try {
+    const value = JSON.parse(rawBody) as unknown;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('payload is not an object');
+    payload = value as Record<string, unknown>;
+  } catch {
+    return c.json({ error: 'QQ 回调请求体不是有效 JSON' }, 400);
+  }
+
+  const operation = Number(payload.op);
+  const data = payload.d && typeof payload.d === 'object' && !Array.isArray(payload.d)
+    ? payload.d as Record<string, unknown>
+    : {};
+  if (operation === 13) {
+    const plainToken = textField(data.plain_token, 'plain_token', 1, 512);
+    const eventTimestamp = textField(data.event_ts, 'event_ts', 1, 32);
+    if (!channel.qq_bot_secret) return c.json({ error: 'QQ Bot Secret 尚未配置' }, 409);
+    return c.json({
+      plain_token: plainToken,
+      signature: await signQQValidation(channel.qq_bot_secret, eventTimestamp, plainToken),
+    });
+  }
+
+  if (!channel.qq_bot_secret) return c.json({ error: 'QQ Bot Secret 尚未配置' }, 409);
+  const signature = c.req.header('X-Signature-Ed25519') || '';
+  const timestamp = c.req.header('X-Signature-Timestamp') || '';
+  if (!(await verifyQQWebhookSignature(channel.qq_bot_secret, timestamp, rawBody, signature))) {
+    return c.json({ error: 'QQ 回调签名无效' }, 401);
+  }
+  if (operation === 12) return c.json({});
+
+  const event = typeof payload.t === 'string' ? payload.t : '';
+  const author = data.author && typeof data.author === 'object' && !Array.isArray(data.author)
+    ? data.author as Record<string, unknown>
+    : {};
+  const openidValue = event === 'FRIEND_ADD' || event === 'FRIEND_DEL'
+    ? data.openid
+    : author.user_openid || data.user_openid || data.openid;
+  const openid = typeof openidValue === 'string' ? openidValue.trim() : '';
+  if (openid && ['FRIEND_ADD', 'C2C_MESSAGE_CREATE', 'C2C_MSG_RECEIVE'].includes(event)) {
+    const nickname = typeof author.username === 'string' ? author.username : undefined;
+    await upsertQQUser(c.env.DB, channel.id, openid, 'webhook', nickname);
+  } else if (openid && ['FRIEND_DEL', 'C2C_MSG_REJECT'].includes(event)) {
+    const user = await c.env.DB.prepare(
+      'SELECT id FROM qq_notification_users WHERE channel_id = ?1 AND openid = ?2',
+    ).bind(channel.id, openid).first<{ id: string }>();
+    if (user) await setQQUserEnabled(c.env.DB, channel.id, user.id, false);
+  }
+  return c.json({});
+});
+
 app.get('/api/health', (c) => c.json({ ok: true, providers: ['worker', 'globalping'] }));
 
 app.get('/api/auth/status', async (c) => {
@@ -776,18 +861,22 @@ app.post('/api/notifications', async (c) => {
   const auth = await requireAdminResponse(c);
   if (auth) return auth;
   const body = await bodyObject(c);
-  if (body.type !== undefined && body.type !== 'pushplus') throw new ValidationError('通知类型只能是 PushPlus');
+  const type = notificationTypeInput(body.type);
   const name = textField(body.name, '通知名称', 1, 80);
-  const token = notificationTokenInput(body.token);
   const defaultEnabled = booleanField(body.defaultEnabled, '默认启用', false);
   const applyToExisting = booleanField(body.applyToExisting, '应用到现有监控', false);
+  const token = type === 'pushplus' ? notificationTokenInput(body.token) : '';
+  const appId = type === 'qqbot' ? qqAppIdInput(body.appId) : null;
+  const appSecret = type === 'qqbot' ? qqSecretInput(body.appSecret, 'QQ AppSecret') : null;
+  const botSecret = type === 'qqbot' ? qqSecretInput(body.botSecret, 'QQ Bot Secret') : null;
   const id = newId();
   const timestamp = nowIso();
   await c.env.DB.prepare(
     `INSERT INTO notification_channels
-     (id, type, name, token_plaintext, default_enabled, created_at, updated_at)
-     VALUES (?1, 'pushplus', ?2, ?3, ?4, ?5, ?5)`,
-  ).bind(id, name, token, defaultEnabled ? 1 : 0, timestamp).run();
+     (id, type, name, token_ciphertext, token_plaintext, default_enabled,
+      qq_app_id, qq_app_secret, qq_bot_secret, created_at, updated_at)
+     VALUES (?1, ?2, ?3, '', ?4, ?5, ?6, ?7, ?8, ?9, ?9)`,
+  ).bind(id, type, name, token, defaultEnabled ? 1 : 0, appId, appSecret, botSecret, timestamp).run();
   if (applyToExisting) await applyChannelToExistingMonitors(c.env.DB, id, defaultEnabled);
   const channel = (await listNotificationChannels(c.env.DB)).find((item) => item.id === id);
   return c.json({ channel }, 201);
@@ -800,23 +889,98 @@ app.patch('/api/notifications/:id', async (c) => {
   const current = await getNotificationChannelRow(c.env.DB, id);
   if (!current) return c.json({ error: '通知配置不存在' }, 404);
   const body = await bodyObject(c);
-  if (body.type !== undefined && body.type !== 'pushplus') throw new ValidationError('通知类型只能是 PushPlus');
+  const type = notificationTypeInput(body.type, current.type);
+  if (type !== current.type) throw new ValidationError('暂不支持修改通知类型，请新建另一种通知配置');
   const name = body.name === undefined ? current.name : textField(body.name, '通知名称', 1, 80);
-  let tokenPlaintext = current.token_plaintext;
-  if (body.token !== undefined) {
+  let tokenPlaintext = type === 'pushplus' ? current.token_plaintext : '';
+  let appId = type === 'qqbot' ? current.qq_app_id : null;
+  let appSecret = type === 'qqbot' ? current.qq_app_secret : null;
+  let botSecret = type === 'qqbot' ? current.qq_bot_secret : null;
+  if (type === 'pushplus' && body.token !== undefined) {
     if (typeof body.token !== 'string') throw new ValidationError('发送密钥必须是文本');
     if (body.token.trim()) tokenPlaintext = notificationTokenInput(body.token);
+  }
+  if (type === 'qqbot') {
+    if (body.appId !== undefined) appId = qqAppIdInput(body.appId);
+    if (body.appSecret !== undefined) appSecret = qqSecretInput(body.appSecret, 'QQ AppSecret');
+    if (body.botSecret !== undefined) botSecret = qqSecretInput(body.botSecret, 'QQ Bot Secret');
+    if (!appId || !appSecret || !botSecret) throw new ValidationError('QQ 机器人配置不完整，请填写 AppID、AppSecret 和 Bot Secret');
   }
   const defaultEnabled = booleanField(body.defaultEnabled, '默认启用', current.default_enabled === 1);
   const applyToExisting = booleanField(body.applyToExisting, '应用到现有监控', false);
   await c.env.DB.prepare(
     `UPDATE notification_channels
-     SET name = ?1, token_plaintext = ?2, default_enabled = ?3, updated_at = ?4
-     WHERE id = ?5`,
-  ).bind(name, tokenPlaintext, defaultEnabled ? 1 : 0, nowIso(), id).run();
+     SET name = ?1, token_plaintext = ?2, default_enabled = ?3,
+         qq_app_id = ?4, qq_app_secret = ?5, qq_bot_secret = ?6,
+         updated_at = ?7
+     WHERE id = ?8`,
+  ).bind(name, tokenPlaintext, defaultEnabled ? 1 : 0, appId, appSecret, botSecret, nowIso(), id).run();
   if (applyToExisting) await applyChannelToExistingMonitors(c.env.DB, id, defaultEnabled);
   const channel = (await listNotificationChannels(c.env.DB)).find((item) => item.id === id);
   return c.json({ channel });
+});
+
+app.get('/api/notifications/:id/qq/users', async (c) => {
+  const auth = await requireAdminResponse(c);
+  if (auth) return auth;
+  const channel = await getNotificationChannelRow(c.env.DB, c.req.param('id'));
+  if (!channel || channel.type !== 'qqbot') return c.json({ error: 'QQ 通知配置不存在' }, 404);
+  return c.json({ users: await listQQUsers(c.env.DB, channel.id) });
+});
+
+app.post('/api/notifications/:id/qq/users', async (c) => {
+  const auth = await requireAdminResponse(c);
+  if (auth) return auth;
+  const channel = await getNotificationChannelRow(c.env.DB, c.req.param('id'));
+  if (!channel || channel.type !== 'qqbot') return c.json({ error: 'QQ 通知配置不存在' }, 404);
+  const body = await bodyObject(c);
+  const openid = textField(body.openid, 'QQ OpenID', 1, 128);
+  const nickname = body.nickname === undefined ? undefined : optionalTextField(body.nickname, '用户备注', 80, '');
+  const user = await upsertQQUser(c.env.DB, channel.id, openid, 'manual', nickname);
+  return c.json({ user }, 201);
+});
+
+app.patch('/api/notifications/:id/qq/users/:userId', async (c) => {
+  const auth = await requireAdminResponse(c);
+  if (auth) return auth;
+  const channel = await getNotificationChannelRow(c.env.DB, c.req.param('id'));
+  if (!channel || channel.type !== 'qqbot') return c.json({ error: 'QQ 通知配置不存在' }, 404);
+  const body = await bodyObject(c);
+  if (typeof body.enabled !== 'boolean') throw new ValidationError('用户启用状态必须是布尔值');
+  if (!(await setQQUserEnabled(c.env.DB, channel.id, c.req.param('userId'), body.enabled))) {
+    return c.json({ error: 'QQ 用户不存在' }, 404);
+  }
+  return c.json({ users: await listQQUsers(c.env.DB, channel.id) });
+});
+
+app.delete('/api/notifications/:id/qq/users/:userId', async (c) => {
+  const auth = await requireAdminResponse(c);
+  if (auth) return auth;
+  const channel = await getNotificationChannelRow(c.env.DB, c.req.param('id'));
+  if (!channel || channel.type !== 'qqbot') return c.json({ error: 'QQ 通知配置不存在' }, 404);
+  if (!(await deleteQQUser(c.env.DB, channel.id, c.req.param('userId')))) return c.json({ error: 'QQ 用户不存在' }, 404);
+  return c.json({ ok: true });
+});
+
+app.post('/api/notifications/:id/qq/link', async (c) => {
+  const auth = await requireAdminResponse(c);
+  if (auth) return auth;
+  const channel = await getNotificationChannelRow(c.env.DB, c.req.param('id'));
+  if (!channel || channel.type !== 'qqbot') return c.json({ error: 'QQ 通知配置不存在' }, 404);
+  try {
+    return c.json({ url: await generateQQAddLink(c.env.DB, {
+      id: channel.id,
+      type: 'qqbot',
+      name: channel.name,
+      qq_app_id: channel.qq_app_id,
+      qq_app_secret: channel.qq_app_secret,
+      qq_bot_secret: channel.qq_bot_secret,
+      qq_access_token: channel.qq_access_token,
+      qq_access_token_expires_at: channel.qq_access_token_expires_at,
+    }) });
+  } catch (error) {
+    return notificationTestError(c, error);
+  }
 });
 
 app.delete('/api/notifications/:id', async (c) => {
@@ -830,7 +994,7 @@ app.post('/api/notifications/:id/test', async (c) => {
   const auth = await requireAdminResponse(c);
   if (auth) return auth;
   try {
-    await sendTestNotification(c.env, c.req.param('id'));
+    await sendTestNotification(c.env, { channelId: c.req.param('id') });
   } catch (error) {
     return notificationTestError(c, error);
   }
@@ -841,16 +1005,29 @@ app.post('/api/notifications/test', async (c) => {
   const auth = await requireAdminResponse(c);
   if (auth) return auth;
   const body = await bodyObject(c);
-  if (body.type !== undefined && body.type !== 'pushplus') throw new ValidationError('通知类型只能是 PushPlus');
   const channelId = body.channelId === undefined ? undefined : textField(body.channelId, '通知配置', 1, 128);
+  const type = body.type === undefined ? undefined : notificationTypeInput(body.type);
   const name = body.name === undefined ? undefined : textField(body.name, '通知名称', 1, 80);
   let token: string | undefined;
   if (body.token !== undefined) {
     if (typeof body.token !== 'string') throw new ValidationError('发送密钥必须是文本');
     if (body.token.trim()) token = notificationTokenInput(body.token);
   }
+  const qqAppId = body.appId === undefined ? undefined : qqAppIdInput(body.appId);
+  const qqAppSecret = body.appSecret === undefined ? undefined : qqSecretInput(body.appSecret, 'QQ AppSecret');
+  const qqBotSecret = body.botSecret === undefined ? undefined : qqSecretInput(body.botSecret, 'QQ Bot Secret');
+  const qqOpenId = body.openid === undefined ? undefined : textField(body.openid, 'QQ OpenID', 1, 128);
   try {
-    await sendTestNotification(c.env, channelId, token, name);
+    await sendTestNotification(c.env, {
+      channelId,
+      type,
+      token,
+      name,
+      qqAppId,
+      qqAppSecret,
+      qqBotSecret,
+      qqOpenId,
+    });
   } catch (error) {
     return notificationTestError(c, error);
   }

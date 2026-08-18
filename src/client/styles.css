@@ -235,6 +235,7 @@
       .about-item span { color: var(--muted); line-height: 1.5; }
       .monitor-modal { width: min(980px, 100%); }
       .notification-modal { width: min(680px, 100%); }
+      .qq-notification-modal { width: min(820px, 100%); }
       .monitor-form-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, .5fr); gap: 18px; align-items: start; }
       .notification-panel { min-width: 0; border: 1px solid var(--line); background: var(--panel-2); padding: 15px; }
       .notification-panel .section-head { margin-bottom: 11px; }
@@ -260,6 +261,23 @@
       .notification-list { padding: 0 16px; }
       .notification-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 0; border-bottom: 1px solid rgba(42,54,66,.72); }
       .notification-row:last-child { border-bottom: 0; }
+      .qq-management { display: grid; gap: 12px; margin-top: 17px; }
+      .qq-link-panel { min-width: 0; border: 1px solid var(--line); background: var(--panel-2); padding: 14px; }
+      .qq-link-panel .section-head { align-items: flex-start; }
+      .qq-link-panel .field-note { margin: 5px 0 0; }
+      .qq-qr-result { display: flex; align-items: center; gap: 16px; margin-top: 14px; }
+      .qq-qr { display: block; width: 192px; height: 192px; border: 1px solid var(--line); background: #fff; padding: 7px; }
+      .qq-link-copy { display: grid; gap: 8px; min-width: 0; flex: 1; }
+      .qq-link-copy textarea { min-height: 74px; resize: vertical; }
+      .webhook-url { width: 100%; margin-top: 12px; color: var(--soft); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+      .qq-user-add { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto; gap: 8px; margin-top: 12px; }
+      .qq-user-list { display: grid; gap: 7px; margin-top: 12px; }
+      .qq-user-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 10px; border: 1px solid var(--line); background: var(--panel); }
+      .qq-user-main { display: grid; gap: 3px; min-width: 0; }
+      .qq-user-main strong, .qq-user-main span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .qq-user-main strong { color: var(--text); font-size: 13px; }
+      .qq-user-main span { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+      .qq-user-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
       @media (max-width: 920px) {
         .sidebar { width: 64px; flex-basis: 64px; padding: 18px 9px; }
         .brand { padding: 0 7px 24px; }
@@ -290,4 +308,9 @@
         .status-editor { grid-template-columns: 1fr; }
         .status-editor-preview { position: static; }
         .about-grid { grid-template-columns: 1fr; }
+        .qq-qr-result { align-items: stretch; flex-direction: column; }
+        .qq-qr { width: 180px; height: 180px; }
+        .qq-user-add { grid-template-columns: 1fr; }
+        .qq-user-row { align-items: flex-start; flex-direction: column; }
+        .qq-user-actions { justify-content: flex-start; }
       }

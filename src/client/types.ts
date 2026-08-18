@@ -94,18 +94,33 @@ export interface AdminSettings {
 
 export interface NotificationChannel {
   id: string;
-  type: 'pushplus';
+  type: 'pushplus' | 'qqbot';
   name: string;
   defaultEnabled: number;
   tokenConfigured: boolean;
+  appId: string | null;
+  appSecretConfigured: boolean;
+  botSecretConfigured: boolean;
+  userCount: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface QQNotificationUser {
+  id: string;
+  openid: string;
+  nickname: string | null;
+  source: 'manual' | 'webhook';
+  enabled: number;
+  createdAt: string;
+  updatedAt: string;
+  lastSeenAt: string | null;
 }
 
 export interface MonitorNotificationBinding {
   channelId: string;
   name: string;
-  type: 'pushplus';
+  type: 'pushplus' | 'qqbot';
   defaultEnabled: number;
   enabled: number;
 }
