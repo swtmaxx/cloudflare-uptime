@@ -83,12 +83,11 @@ function toUser(row: QQUserRow): QQUser {
   };
 }
 
-function requireQQCredentials(channel: QQChannelRow): { appId: string; appSecret: string; botSecret: string } {
+function requireQQCredentials(channel: QQChannelRow): { appId: string; appSecret: string } {
   const appId = asString(channel.qq_app_id);
   const appSecret = asString(channel.qq_app_secret);
-  const botSecret = asString(channel.qq_bot_secret);
-  if (!appId || !appSecret || !botSecret) throw new QQBotError('QQ 机器人配置不完整，请填写 AppID、AppSecret 和 Bot Secret', 'CONFIGURATION');
-  return { appId, appSecret, botSecret };
+  if (!appId || !appSecret) throw new QQBotError('QQ 机器人配置不完整，请填写 AppID 和 AppSecret', 'CONFIGURATION');
+  return { appId, appSecret };
 }
 
 async function requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {
@@ -347,5 +346,5 @@ export async function deleteQQUser(db: D1Database, channelId: string, userId: st
 }
 
 export function qqChannelConfigured(channel: QQChannelRow): boolean {
-  return Boolean(asString(channel.qq_app_id) && asString(channel.qq_app_secret) && asString(channel.qq_bot_secret));
+  return Boolean(asString(channel.qq_app_id) && asString(channel.qq_app_secret));
 }

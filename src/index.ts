@@ -617,7 +617,7 @@ app.use('/api/*', async (c, next) => {
 });
 
 // QQ calls this endpoint without the admin session. The channel-specific URL
-// keeps the public callback scoped to one bot, while the Bot Secret authenticates every payload.
+// keeps the public callback scoped to one bot, while AppSecret authenticates every payload.
 app.post('/api/notifications/:id/qq/webhook', async (c) => {
   const channel = await getNotificationChannelRow(c.env.DB, c.req.param('id'));
   if (!channel || channel.type !== 'qqbot') return c.json({ error: 'QQ 通知配置不存在' }, 404);
@@ -639,20 +639,23 @@ app.post('/api/notifications/:id/qq/webhook', async (c) => {
   const data = payload.d && typeof payload.d === 'object' && !Array.isArray(payload.d)
     ? payload.d as Record<string, unknown>
     : {};
+  // QQ's webhook documentation calls this value Bot Secret; in the
+  // developer console it is the same credential shown as AppSecret.
+  const webhookSecret = channel.qq_app_secret || channel.qq_bot_secret;
   if (operation === 13) {
     const plainToken = textField(data.plain_token, 'plain_token', 1, 512);
     const eventTimestamp = textField(data.event_ts, 'event_ts', 1, 32);
-    if (!channel.qq_bot_secret) return c.json({ error: 'QQ Bot Secret 尚未配置' }, 409);
+    if (!webhookSecret) return c.json({ error: 'QQ AppSecret 尚未配置' }, 409);
     return c.json({
       plain_token: plainToken,
-      signature: await signQQValidation(channel.qq_bot_secret, eventTimestamp, plainToken),
+      signature: await signQQValidation(webhookSecret, eventTimestamp, plainToken),
     });
   }
 
-  if (!channel.qq_bot_secret) return c.json({ error: 'QQ Bot Secret 尚未配置' }, 409);
+  if (!webhookSecret) return c.json({ error: 'QQ AppSecret 尚未配置' }, 409);
   const signature = c.req.header('X-Signature-Ed25519') || '';
   const timestamp = c.req.header('X-Signature-Timestamp') || '';
-  if (!(await verifyQQWebhookSignature(channel.qq_bot_secret, timestamp, rawBody, signature))) {
+  if (!(await verifyQQWebhookSignature(webhookSecret, timestamp, rawBody, signature))) {
     return c.json({ error: 'QQ 回调签名无效' }, 401);
   }
   if (operation === 12) return c.json({});
@@ -868,7 +871,9 @@ app.post('/api/notifications', async (c) => {
   const token = type === 'pushplus' ? notificationTokenInput(body.token) : '';
   const appId = type === 'qqbot' ? qqAppIdInput(body.appId) : null;
   const appSecret = type === 'qqbot' ? qqSecretInput(body.appSecret, 'QQ AppSecret') : null;
-  const botSecret = type === 'qqbot' ? qqSecretInput(body.botSecret, 'QQ Bot Secret') : null;
+  const botSecret = type === 'qqbot' && body.botSecret !== undefined
+    ? qqSecretInput(body.botSecret, 'QQ Bot Secret')
+    : null;
   const id = newId();
   const timestamp = nowIso();
   await c.env.DB.prepare(
@@ -904,7 +909,7 @@ app.patch('/api/notifications/:id', async (c) => {
     if (body.appId !== undefined) appId = qqAppIdInput(body.appId);
     if (body.appSecret !== undefined) appSecret = qqSecretInput(body.appSecret, 'QQ AppSecret');
     if (body.botSecret !== undefined) botSecret = qqSecretInput(body.botSecret, 'QQ Bot Secret');
-    if (!appId || !appSecret || !botSecret) throw new ValidationError('QQ 机器人配置不完整，请填写 AppID、AppSecret 和 Bot Secret');
+    if (!appId || !appSecret) throw new ValidationError('QQ 机器人配置不完整，请填写 AppID 和 AppSecret');
   }
   const defaultEnabled = booleanField(body.defaultEnabled, '默认启用', current.default_enabled === 1);
   const applyToExisting = booleanField(body.applyToExisting, '应用到现有监控', false);

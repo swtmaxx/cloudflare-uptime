@@ -51,10 +51,8 @@ export function NotificationEditor({
   const [token, setToken] = useState('');
   const [appId, setAppId] = useState(channel?.appId || '');
   const [appSecret, setAppSecret] = useState('');
-  const [botSecret, setBotSecret] = useState('');
   const [showToken, setShowToken] = useState(false);
   const [showAppSecret, setShowAppSecret] = useState(false);
-  const [showBotSecret, setShowBotSecret] = useState(false);
   const [defaultEnabled, setDefaultEnabled] = useState(channel?.defaultEnabled === 1);
   const [applyToExisting, setApplyToExisting] = useState(false);
   const [users, setUsers] = useState<QQNotificationUser[]>([]);
@@ -74,7 +72,6 @@ export function NotificationEditor({
     setToken('');
     setAppId(channel?.appId || '');
     setAppSecret('');
-    setBotSecret('');
     setDefaultEnabled(channel?.defaultEnabled === 1);
     setApplyToExisting(false);
     setLink('');
@@ -112,7 +109,6 @@ export function NotificationEditor({
       } else {
         payload.appId = appId;
         if (appSecret.trim()) payload.appSecret = appSecret;
-        if (botSecret.trim()) payload.botSecret = botSecret;
       }
       await api(channel ? `/api/notifications/${channel.id}` : '/api/notifications', {
         method: channel ? 'PATCH' : 'POST',
@@ -147,7 +143,6 @@ export function NotificationEditor({
       } else {
         if (appId.trim()) payload.appId = appId;
         if (appSecret.trim()) payload.appSecret = appSecret;
-        if (botSecret.trim()) payload.botSecret = botSecret;
         if (testOpenid.trim()) payload.openid = testOpenid;
       }
       await api('/api/notifications/test', { method: 'POST', body: JSON.stringify(payload) });
@@ -258,11 +253,10 @@ export function NotificationEditor({
         <div className="field full"><label>显示名称</label><input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} required /></div>
         {type === 'pushplus' ? <div className="field full"><label>发送密钥</label><div className="secret-input"><input value={token} onChange={(event) => setToken(event.target.value)} type={showToken ? 'text' : 'password'} placeholder={channel?.tokenConfigured ? '已保存，留空保持不变' : '输入 PushPlus Token'} maxLength={512} required={!channel} /><button className="secret-toggle" type="button" title={showToken ? '隐藏发送密钥' : '显示发送密钥'} aria-label={showToken ? '隐藏发送密钥' : '显示发送密钥'} onClick={() => setShowToken(!showToken)}>{showToken ? '隐藏' : '显示'}</button></div></div> : <>
           <div className="field full"><label>QQ AppID</label><input value={appId} onChange={(event) => setAppId(event.target.value)} maxLength={128} placeholder="开放平台中的 AppID" required /></div>
-          <div className="field full"><label>QQ AppSecret</label><div className="secret-input"><input value={appSecret} onChange={(event) => setAppSecret(event.target.value)} type={showAppSecret ? 'text' : 'password'} placeholder={channel?.appSecretConfigured ? '已保存，留空保持不变' : '输入 AppSecret / ClientSecret'} maxLength={512} required={!channel} /><button className="secret-toggle" type="button" title={showAppSecret ? '隐藏 AppSecret' : '显示 AppSecret'} aria-label={showAppSecret ? '隐藏 AppSecret' : '显示 AppSecret'} onClick={() => setShowAppSecret(!showAppSecret)}>{showAppSecret ? '隐藏' : '显示'}</button></div></div>
-          <div className="field full"><label>QQ Bot Secret</label><div className="secret-input"><input value={botSecret} onChange={(event) => setBotSecret(event.target.value)} type={showBotSecret ? 'text' : 'password'} placeholder={channel?.botSecretConfigured ? '已保存，留空保持不变' : '用于 Webhook 签名校验'} maxLength={512} required={!channel} /><button className="secret-toggle" type="button" title={showBotSecret ? '隐藏 Bot Secret' : '显示 Bot Secret'} aria-label={showBotSecret ? '隐藏 Bot Secret' : '显示 Bot Secret'} onClick={() => setShowBotSecret(!showBotSecret)}>{showBotSecret ? '隐藏' : '显示'}</button></div></div>
+          <div className="field full"><label>QQ AppSecret</label><div className="secret-input"><input value={appSecret} onChange={(event) => setAppSecret(event.target.value)} type={showAppSecret ? 'text' : 'password'} placeholder={channel?.appSecretConfigured ? '已保存，留空保持不变' : '输入开放平台中的 AppSecret'} maxLength={512} required={!channel} /><button className="secret-toggle" type="button" title={showAppSecret ? '隐藏 AppSecret' : '显示 AppSecret'} aria-label={showAppSecret ? '隐藏 AppSecret' : '显示 AppSecret'} onClick={() => setShowAppSecret(!showAppSecret)}>{showAppSecret ? '隐藏' : '显示'}</button></div></div>
         </>}
       </div>
-      <p className="field-note">{type === 'pushplus' ? <>测试不会保存当前输入；编辑已有渠道时留空 Token 将使用已保存密钥。更多信息：<a href="https://www.pushplus.plus/" target="_blank" rel="noreferrer">https://www.pushplus.plus/</a></> : <>QQ 使用官方机器人 Open Platform，只发送私聊纯文本。AppSecret 用于获取令牌，Bot Secret 用于 Webhook 签名验证。</>}</p>
+      <p className="field-note">{type === 'pushplus' ? <>测试不会保存当前输入；编辑已有渠道时留空 Token 将使用已保存密钥。更多信息：<a href="https://www.pushplus.plus/" target="_blank" rel="noreferrer">https://www.pushplus.plus/</a></> : <>QQ 使用官方机器人 Open Platform，只发送私聊纯文本。AppSecret 同时用于获取 Access Token 和 Webhook 签名；控制台中的 Token 不需要填写。</>}</p>
       {qq ? <div className="qq-management">
         <div className="qq-link-panel">
           <div className="section-head"><div><h3 className="section-title">扫码添加用户</h3><p className="field-note">先保存 QQ 配置，再生成官方添加链接。用户扫码后仍需在 QQ 中确认。</p></div><button className="button small ghost" type="button" disabled={!channel || busy} onClick={createLink}>生成二维码</button></div>
