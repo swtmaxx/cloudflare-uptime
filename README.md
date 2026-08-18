@@ -65,14 +65,8 @@ npm run deploy
 
 PushPlus 通知在后台“通知设置”中配置。每个监控可以单独选择通知配置，并设置部分异常、宕机、恢复事件和连续异常次数；默认连续异常 3 次后通知。Globalping Token 在系统设置中配置。
 
-QQ 通知使用 QQ 官方机器人 Open Platform，仅支持 QQ 私聊。创建 QQ 渠道时填写 AppID 和 AppSecret；AppSecret 同时用于获取 Access Token 和 Webhook 签名，控制台中的 Token 不需要填写。保存后可以在通知编辑页生成官方添加链接二维码。用户扫码并确认后，若 QQ 回调已配置，`FRIEND_ADD` 或 `C2C_MESSAGE_CREATE` 会自动登记 OpenID；也可以在后台手动填写 OpenID。
+QQ 通知使用 QQ 官方机器人 Open Platform，仅支持 QQ 私聊。创建 QQ 渠道时填写 AppID 和 AppSecret；系统使用 AppSecret 获取 Access Token，控制台中的 Token 和公网回调地址都不需要填写。保存后可以在通知编辑页生成官方添加链接二维码。
 
-QQ 开放平台的回调地址填写为：
-
-```text
-https://<你的 Worker 域名>/api/notifications/<QQ 渠道 ID>/qq/webhook
-```
-
-并订阅 `GROUP_AND_C2C_EVENT`。系统会处理 QQ 的回调地址验证、用户添加、用户删除和私聊消息事件。QQ 渠道的每个启用用户独立记录发送状态，失败会按 60 秒间隔最多重试 3 次。
+在通知编辑页启动 QQ WebSocket 后，Worker 的 Durable Object 会持续连接 QQ Gateway，并处理 `FRIEND_ADD`、`FRIEND_DEL`、`C2C_MESSAGE_CREATE` 等事件。收到好友添加或私聊事件后会自动登记 OpenID，也可以在后台手动填写 OpenID。QQ 渠道的每个启用用户独立记录发送状态，失败会按 60 秒间隔最多重试 3 次。
 
 Globalping 当前公开 API 配额由其服务端控制；未认证请求和认证请求的额度不同，超出额度会在后台记录为 provider 错误，不会直接判定监控目标宕机。

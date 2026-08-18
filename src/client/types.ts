@@ -110,11 +110,21 @@ export interface QQNotificationUser {
   id: string;
   openid: string;
   nickname: string | null;
-  source: 'manual' | 'webhook';
+  source: 'manual' | 'websocket';
   enabled: number;
   createdAt: string;
   updatedAt: string;
   lastSeenAt: string | null;
+}
+
+export type QQGatewayStatusName = 'stopped' | 'connecting' | 'connected' | 'reconnecting' | 'error';
+
+export interface QQGatewayStatus {
+  status: QQGatewayStatusName;
+  channelId: string | null;
+  lastConnectedAt: string | null;
+  lastEventAt: string | null;
+  lastError: string | null;
 }
 
 export interface MonitorNotificationBinding {

@@ -1,6 +1,7 @@
 export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
+  QQ_GATEWAY: DurableObjectNamespace;
 }
 
 export type MonitorType = 'http' | 'tcp';

@@ -24,6 +24,20 @@
       "migrations_dir": "migrations"
     }
   ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "QQ_GATEWAY",
+        "class_name": "QQGateway"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["QQGateway"]
+    }
+  ],
   "rules": [
     {
       "type": "Text",

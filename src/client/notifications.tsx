@@ -6,6 +6,7 @@ import type {
   MonitorNotificationBinding,
   MonitorNotificationRule,
   NotificationChannel,
+  QQGatewayStatus,
   QQNotificationUser,
 } from './types';
 
@@ -61,6 +62,8 @@ export function NotificationEditor({
   const [userNickname, setUserNickname] = useState('');
   const [link, setLink] = useState('');
   const [qrData, setQrData] = useState('');
+  const [gatewayStatus, setGatewayStatus] = useState<QQGatewayStatus | null>(null);
+  const [gatewayBusy, setGatewayBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [userBusy, setUserBusy] = useState(false);
 
@@ -80,6 +83,8 @@ export function NotificationEditor({
     setTestOpenid('');
     setUserNickname('');
     setUsers([]);
+    setGatewayStatus(null);
+    setGatewayBusy(false);
   }, [channel?.id, channel?.type]);
 
   const loadUsers = async () => {
@@ -93,6 +98,37 @@ export function NotificationEditor({
   };
 
   useEffect(() => { loadUsers(); }, [channel?.id, channel?.type]);
+
+  const loadGatewayStatus = async () => {
+    if (!channel || channel.type !== 'qqbot') return;
+    try {
+      const data = await api<QQGatewayStatus>(`/api/notifications/${channel.id}/qq/gateway/status`);
+      setGatewayStatus(data);
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : '无法读取 QQ WebSocket 状态', true);
+    }
+  };
+
+  useEffect(() => {
+    if (!channel || channel.type !== 'qqbot') return;
+    void loadGatewayStatus();
+    const timer = window.setInterval(() => { void loadGatewayStatus(); }, 5000);
+    return () => window.clearInterval(timer);
+  }, [channel?.id, channel?.type]);
+
+  const gatewayAction = async (action: 'start' | 'stop') => {
+    if (!channel || channel.type !== 'qqbot') return;
+    setGatewayBusy(true);
+    try {
+      const data = await api<QQGatewayStatus>(`/api/notifications/${channel.id}/qq/gateway/${action}`, { method: 'POST' });
+      setGatewayStatus(data);
+      notify(action === 'start' ? 'QQ WebSocket 已启动，正在连接 Gateway' : 'QQ WebSocket 已停止');
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : 'QQ WebSocket 操作失败', true);
+    } finally {
+      setGatewayBusy(false);
+    }
+  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -241,9 +277,13 @@ export function NotificationEditor({
     }
   };
 
-  const webhookUrl = channel && channel.type === 'qqbot'
-    ? `${window.location.origin}/api/notifications/${channel.id}/qq/webhook`
-    : '';
+  const gatewayStatusLabel: Record<QQGatewayStatus['status'], string> = {
+    stopped: '已停止',
+    connecting: '连接中',
+    connected: '已连接',
+    reconnecting: '重连中',
+    error: '连接错误',
+  };
 
   return <Modal onClose={onClose} className={qq ? 'notification-modal qq-notification-modal' : 'notification-modal'}>
     <div className="modal-head"><div><div className="page-kicker">{channelKicker(type)}</div><h2>{channel ? '编辑通知' : '设置通知'}</h2></div></div>
@@ -256,14 +296,14 @@ export function NotificationEditor({
           <div className="field full"><label>QQ AppSecret</label><div className="secret-input"><input value={appSecret} onChange={(event) => setAppSecret(event.target.value)} type={showAppSecret ? 'text' : 'password'} placeholder={channel?.appSecretConfigured ? '已保存，留空保持不变' : '输入开放平台中的 AppSecret'} maxLength={512} required={!channel} /><button className="secret-toggle" type="button" title={showAppSecret ? '隐藏 AppSecret' : '显示 AppSecret'} aria-label={showAppSecret ? '隐藏 AppSecret' : '显示 AppSecret'} onClick={() => setShowAppSecret(!showAppSecret)}>{showAppSecret ? '隐藏' : '显示'}</button></div></div>
         </>}
       </div>
-      <p className="field-note">{type === 'pushplus' ? <>测试不会保存当前输入；编辑已有渠道时留空 Token 将使用已保存密钥。更多信息：<a href="https://www.pushplus.plus/" target="_blank" rel="noreferrer">https://www.pushplus.plus/</a></> : <>QQ 使用官方机器人 Open Platform，只发送私聊纯文本。AppSecret 同时用于获取 Access Token 和 Webhook 签名；控制台中的 Token 不需要填写。</>}</p>
+      <p className="field-note">{type === 'pushplus' ? <>测试不会保存当前输入；编辑已有渠道时留空 Token 将使用已保存密钥。更多信息：<a href="https://www.pushplus.plus/" target="_blank" rel="noreferrer">https://www.pushplus.plus/</a></> : <>QQ 使用官方机器人 Open Platform，只发送私聊纯文本。AppSecret 用于获取 Access Token；控制台中的 Token 不需要填写。</>}</p>
       {qq ? <div className="qq-management">
         <div className="qq-link-panel">
           <div className="section-head"><div><h3 className="section-title">扫码添加用户</h3><p className="field-note">先保存 QQ 配置，再生成官方添加链接。用户扫码后仍需在 QQ 中确认。</p></div><button className="button small ghost" type="button" disabled={!channel || busy} onClick={createLink}>生成二维码</button></div>
           {qrData ? <div className="qq-qr-result"><img className="qq-qr" src={qrData} alt="QQ 机器人添加二维码" /><div className="qq-link-copy"><textarea readOnly value={link} rows={3} /><button className="button small" type="button" onClick={copyLink}>复制添加链接</button></div></div> : <div className="notice">保存后可以在这里生成 QQ 官方添加二维码。</div>}
         </div>
-        {channel ? <div className="qq-link-panel"><div className="section-head"><div><h3 className="section-title">Webhook 地址</h3><p className="field-note">把这个地址填写到 QQ 开放平台的回调配置，并订阅 GROUP_AND_C2C_EVENT。</p></div><button className="button small ghost" type="button" onClick={async () => { try { await navigator.clipboard.writeText(webhookUrl); notify('Webhook 地址已复制'); } catch { notify('复制失败，请手动复制地址', true); } }}>复制</button></div><input className="webhook-url" readOnly value={webhookUrl} /></div> : null}
-        {channel ? <div className="qq-link-panel"><div className="section-head"><div><h3 className="section-title">QQ 用户</h3><p className="field-note">Webhook 收到 FRIEND_ADD 或 C2C_MESSAGE_CREATE 后会自动加入；也可以手动填写 OpenID。</p></div></div><div className="qq-user-add"><input value={openid} onChange={(event) => setOpenid(event.target.value)} placeholder="QQ OpenID" maxLength={128} required /><input value={userNickname} onChange={(event) => setUserNickname(event.target.value)} placeholder="备注（可选）" maxLength={80} /><button className="button small" type="button" disabled={userBusy} onClick={addUser}>添加</button></div><div className="qq-user-list">{users.length ? users.map((user) => <div className="qq-user-row" key={user.id}><div className="qq-user-main"><strong>{user.nickname || '未命名用户'}</strong><span>{user.openid}</span></div><div className="qq-user-actions"><span className="muted">{user.source === 'webhook' ? 'Webhook' : '手动'} · {user.enabled ? '启用' : '停用'}</span><button className="button small ghost" type="button" disabled={userBusy} onClick={() => toggleUser(user)}>{user.enabled ? '停用' : '启用'}</button><button className="button small ghost danger" type="button" disabled={userBusy} onClick={() => deleteUser(user)}>删除</button></div></div>) : <div className="empty">还没有 QQ 用户</div>}</div></div> : null}
+        {channel ? <div className="qq-link-panel"><div className="section-head"><div><h3 className="section-title">WebSocket 连接</h3><p className="field-note">Worker 会在后台连接 QQ Gateway。启动后无需配置公网回调地址，收到私聊或好友事件时会自动登记 OpenID。</p></div><div className="gateway-actions"><button className="button small ghost" type="button" disabled={busy || gatewayBusy || gatewayStatus?.status === 'connected' || gatewayStatus?.status === 'connecting' || gatewayStatus?.status === 'reconnecting'} onClick={() => gatewayAction('start')}>启动</button><button className="button small ghost danger" type="button" disabled={busy || gatewayBusy || gatewayStatus?.status === 'stopped'} onClick={() => gatewayAction('stop')}>停止</button></div></div><div className={`gateway-status ${gatewayStatus?.status || 'stopped'}`}><span className="status-dot" /><strong>{gatewayStatus ? gatewayStatusLabel[gatewayStatus.status] : '读取状态中'}</strong>{gatewayStatus?.lastConnectedAt ? <span>最近连接 {new Date(gatewayStatus.lastConnectedAt).toLocaleString()}</span> : null}{gatewayStatus?.lastEventAt ? <span>最近事件 {new Date(gatewayStatus.lastEventAt).toLocaleString()}</span> : null}</div>{gatewayStatus?.lastError ? <div className="notice warning">{gatewayStatus.lastError}</div> : null}</div> : null}
+        {channel ? <div className="qq-link-panel"><div className="section-head"><div><h3 className="section-title">QQ 用户</h3><p className="field-note">WebSocket 收到 FRIEND_ADD 或 C2C_MESSAGE_CREATE 后会自动加入；也可以手动填写 OpenID。</p></div></div><div className="qq-user-add"><input value={openid} onChange={(event) => setOpenid(event.target.value)} placeholder="QQ OpenID" maxLength={128} required /><input value={userNickname} onChange={(event) => setUserNickname(event.target.value)} placeholder="备注（可选）" maxLength={80} /><button className="button small" type="button" disabled={userBusy} onClick={addUser}>添加</button></div><div className="qq-user-list">{users.length ? users.map((user) => <div className="qq-user-row" key={user.id}><div className="qq-user-main"><strong>{user.nickname || '未命名用户'}</strong><span>{user.openid}</span></div><div className="qq-user-actions"><span className="muted">{user.source === 'websocket' ? 'WebSocket' : '手动'} · {user.enabled ? '启用' : '停用'}</span><button className="button small ghost" type="button" disabled={userBusy} onClick={() => toggleUser(user)}>{user.enabled ? '停用' : '启用'}</button><button className="button small ghost danger" type="button" disabled={userBusy} onClick={() => deleteUser(user)}>删除</button></div></div>) : <div className="empty">还没有 QQ 用户</div>}</div></div> : null}
         <div className="field full"><label>测试 OpenID（可选）</label><input value={testOpenid} onChange={(event) => setTestOpenid(event.target.value)} maxLength={128} placeholder={channel ? '留空则发送给所有启用用户' : '未保存配置时必填'} /></div>
       </div> : null}
       <div className="notification-options">

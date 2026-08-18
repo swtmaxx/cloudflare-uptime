@@ -269,7 +269,12 @@
       .qq-qr { display: block; width: 192px; height: 192px; border: 1px solid var(--line); background: #fff; padding: 7px; }
       .qq-link-copy { display: grid; gap: 8px; min-width: 0; flex: 1; }
       .qq-link-copy textarea { min-height: 74px; resize: vertical; }
-      .webhook-url { width: 100%; margin-top: 12px; color: var(--soft); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+      .gateway-actions { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
+      .gateway-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding: 10px 11px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); font-size: 12px; }
+      .gateway-status strong { color: var(--text); font-size: 13px; }
+      .gateway-status.connected .status-dot { background: var(--mint); box-shadow: 0 0 0 3px rgba(94,224,178,.12); }
+      .gateway-status.connecting .status-dot, .gateway-status.reconnecting .status-dot { background: var(--amber); }
+      .gateway-status.error .status-dot { background: var(--red); }
       .qq-user-add { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto; gap: 8px; margin-top: 12px; }
       .qq-user-list { display: grid; gap: 7px; margin-top: 12px; }
       .qq-user-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 10px; border: 1px solid var(--line); background: var(--panel); }

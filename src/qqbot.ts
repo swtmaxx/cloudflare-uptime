@@ -4,7 +4,6 @@ import { newId, nowIso } from './db';
 const QQ_API_BASE = 'https://api.bot.qq.com';
 const QQ_REQUEST_TIMEOUT_MS = 10_000;
 const QQ_TOKEN_REFRESH_MARGIN_MS = 60_000;
-const QQ_WEBHOOK_MAX_AGE_SECONDS = 10 * 60;
 
 export interface QQChannelRow {
   id: string;
@@ -22,7 +21,7 @@ export interface QQUserRow {
   channel_id: string;
   openid: string;
   nickname: string | null;
-  source: 'manual' | 'webhook';
+  source: 'manual' | 'websocket';
   enabled: number;
   created_at: string;
   updated_at: string;
@@ -33,7 +32,7 @@ export interface QQUser {
   id: string;
   openid: string;
   nickname: string | null;
-  source: 'manual' | 'webhook';
+  source: 'manual' | 'websocket';
   enabled: number;
   createdAt: string;
   updatedAt: string;
@@ -75,7 +74,7 @@ function toUser(row: QQUserRow): QQUser {
     id: row.id,
     openid: row.openid,
     nickname: row.nickname,
-    source: row.source === 'webhook' ? 'webhook' : 'manual',
+    source: row.source === 'websocket' ? 'websocket' : 'manual',
     enabled: row.enabled,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -205,98 +204,6 @@ export async function generateQQAddLink(db: D1Database, channel: QQChannelRow): 
   return url;
 }
 
-function repeatedSeed(secret: string): Uint8Array {
-  const source = new TextEncoder().encode(secret);
-  if (!source.length) throw new QQBotError('Bot Secret 不能为空', 'CONFIGURATION');
-  const seed = new Uint8Array(32);
-  for (let index = 0; index < seed.length; index += 1) seed[index] = source[index % source.length];
-  return seed;
-}
-
-function pkcs8FromSeed(seed: Uint8Array): Uint8Array {
-  const prefix = new Uint8Array([0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20]);
-  const result = new Uint8Array(prefix.length + seed.length);
-  result.set(prefix, 0);
-  result.set(seed, prefix.length);
-  return result;
-}
-
-function base64UrlToBytes(value: string): Uint8Array {
-  const normalized = value.replaceAll('-', '+').replaceAll('_', '/').padEnd(Math.ceil(value.length / 4) * 4, '=');
-  const binary = atob(normalized);
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
-}
-
-function bytesToHex(bytes: Uint8Array): string {
-  return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function hexToBytes(value: string): Uint8Array | null {
-  if (!/^[0-9a-f]+$/i.test(value) || value.length % 2 !== 0) return null;
-  const bytes = new Uint8Array(value.length / 2);
-  for (let index = 0; index < bytes.length; index += 1) bytes[index] = Number.parseInt(value.slice(index * 2, index * 2 + 2), 16);
-  return bytes;
-}
-
-async function importQQPrivateKey(botSecret: string): Promise<CryptoKey> {
-  return crypto.subtle.importKey(
-    'pkcs8',
-    pkcs8FromSeed(repeatedSeed(botSecret)) as unknown as BufferSource,
-    { name: 'Ed25519' } as unknown as AlgorithmIdentifier,
-    true,
-    ['sign'],
-  );
-}
-
-async function deriveQQPublicKey(botSecret: string): Promise<CryptoKey> {
-  const privateKey = await importQQPrivateKey(botSecret);
-  const jwk = await crypto.subtle.exportKey('jwk', privateKey) as JsonWebKey;
-  if (!jwk.x) throw new QQBotError('无法从 Bot Secret 生成 QQ 公钥', 'CRYPTO_UNSUPPORTED');
-  return crypto.subtle.importKey(
-    'raw',
-    base64UrlToBytes(jwk.x) as unknown as BufferSource,
-    { name: 'Ed25519' } as unknown as AlgorithmIdentifier,
-    false,
-    ['verify'],
-  );
-}
-
-export async function signQQValidation(botSecret: string, eventTimestamp: string, plainToken: string): Promise<string> {
-  const privateKey = await importQQPrivateKey(botSecret);
-  const message = new TextEncoder().encode(`${eventTimestamp}${plainToken}`);
-  const signature = await crypto.subtle.sign(
-    { name: 'Ed25519' } as unknown as AlgorithmIdentifier,
-    privateKey,
-    message as unknown as BufferSource,
-  );
-  return bytesToHex(new Uint8Array(signature));
-}
-
-export async function verifyQQWebhookSignature(
-  botSecret: string,
-  timestamp: string,
-  body: string,
-  signature: string,
-): Promise<boolean> {
-  const timestampNumber = Number(timestamp);
-  if (!/^\d+$/.test(timestamp) || !Number.isFinite(timestampNumber)) return false;
-  if (Math.abs(Math.floor(Date.now() / 1000) - timestampNumber) > QQ_WEBHOOK_MAX_AGE_SECONDS) return false;
-  const signatureBytes = hexToBytes(signature.trim());
-  if (!signatureBytes || signatureBytes.length !== 64) return false;
-  try {
-    const publicKey = await deriveQQPublicKey(botSecret);
-    return crypto.subtle.verify(
-      { name: 'Ed25519' } as unknown as AlgorithmIdentifier,
-      publicKey,
-      signatureBytes as unknown as BufferSource,
-      new TextEncoder().encode(`${timestamp}${body}`) as unknown as BufferSource,
-    );
-  } catch (error) {
-    console.warn(`[qqbot] webhook signature verification failed: ${error instanceof Error ? error.message : String(error)}`);
-    return false;
-  }
-}
-
 export async function listQQUsers(db: D1Database, channelId: string, includeDisabled = true): Promise<QQUser[]> {
   const query = includeDisabled
     ? 'SELECT * FROM qq_notification_users WHERE channel_id = ?1 ORDER BY enabled DESC, updated_at DESC, id'
@@ -309,7 +216,7 @@ export async function upsertQQUser(
   db: D1Database,
   channelId: string,
   openid: string,
-  source: 'manual' | 'webhook',
+  source: 'manual' | 'websocket',
   nickname?: string | null,
 ): Promise<QQUser> {
   const normalizedOpenid = openid.trim();
@@ -326,7 +233,7 @@ export async function upsertQQUser(
        enabled = 1,
        updated_at = excluded.updated_at,
        last_seen_at = COALESCE(excluded.last_seen_at, qq_notification_users.last_seen_at)`,
-  ).bind(newId(), channelId, normalizedOpenid, normalizedNickname, source, timestamp, source === 'webhook' ? timestamp : null).run();
+  ).bind(newId(), channelId, normalizedOpenid, normalizedNickname, source, timestamp, source === 'websocket' ? timestamp : null).run();
   const row = await db.prepare('SELECT * FROM qq_notification_users WHERE channel_id = ?1 AND openid = ?2').bind(channelId, normalizedOpenid).first<QQUserRow>();
   if (!row) throw new QQBotError('QQ 用户保存失败', 'DATABASE');
   return toUser(row);

@@ -45,9 +45,7 @@ import {
   generateQQAddLink,
   listQQUsers,
   setQQUserEnabled,
-  signQQValidation,
   upsertQQUser,
-  verifyQQWebhookSignature,
 } from './qqbot';
 import type {
   Env,
@@ -616,70 +614,6 @@ app.use('/api/*', async (c, next) => {
   await next();
 });
 
-// QQ calls this endpoint without the admin session. The channel-specific URL
-// keeps the public callback scoped to one bot, while AppSecret authenticates every payload.
-app.post('/api/notifications/:id/qq/webhook', async (c) => {
-  const channel = await getNotificationChannelRow(c.env.DB, c.req.param('id'));
-  if (!channel || channel.type !== 'qqbot') return c.json({ error: 'QQ 通知配置不存在' }, 404);
-  const callbackAppId = c.req.header('X-Bot-Appid');
-  if (callbackAppId && channel.qq_app_id && callbackAppId !== channel.qq_app_id) {
-    return c.json({ error: 'QQ 回调 AppID 不匹配' }, 401);
-  }
-  const rawBody = await c.req.text();
-  let payload: Record<string, unknown>;
-  try {
-    const value = JSON.parse(rawBody) as unknown;
-    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('payload is not an object');
-    payload = value as Record<string, unknown>;
-  } catch {
-    return c.json({ error: 'QQ 回调请求体不是有效 JSON' }, 400);
-  }
-
-  const operation = Number(payload.op);
-  const data = payload.d && typeof payload.d === 'object' && !Array.isArray(payload.d)
-    ? payload.d as Record<string, unknown>
-    : {};
-  // QQ's webhook documentation calls this value Bot Secret; in the
-  // developer console it is the same credential shown as AppSecret.
-  const webhookSecret = channel.qq_app_secret || channel.qq_bot_secret;
-  if (operation === 13) {
-    const plainToken = textField(data.plain_token, 'plain_token', 1, 512);
-    const eventTimestamp = textField(data.event_ts, 'event_ts', 1, 32);
-    if (!webhookSecret) return c.json({ error: 'QQ AppSecret 尚未配置' }, 409);
-    return c.json({
-      plain_token: plainToken,
-      signature: await signQQValidation(webhookSecret, eventTimestamp, plainToken),
-    });
-  }
-
-  if (!webhookSecret) return c.json({ error: 'QQ AppSecret 尚未配置' }, 409);
-  const signature = c.req.header('X-Signature-Ed25519') || '';
-  const timestamp = c.req.header('X-Signature-Timestamp') || '';
-  if (!(await verifyQQWebhookSignature(webhookSecret, timestamp, rawBody, signature))) {
-    return c.json({ error: 'QQ 回调签名无效' }, 401);
-  }
-  if (operation === 12) return c.json({});
-
-  const event = typeof payload.t === 'string' ? payload.t : '';
-  const author = data.author && typeof data.author === 'object' && !Array.isArray(data.author)
-    ? data.author as Record<string, unknown>
-    : {};
-  const openidValue = event === 'FRIEND_ADD' || event === 'FRIEND_DEL'
-    ? data.openid
-    : author.user_openid || data.user_openid || data.openid;
-  const openid = typeof openidValue === 'string' ? openidValue.trim() : '';
-  if (openid && ['FRIEND_ADD', 'C2C_MESSAGE_CREATE', 'C2C_MSG_RECEIVE'].includes(event)) {
-    const nickname = typeof author.username === 'string' ? author.username : undefined;
-    await upsertQQUser(c.env.DB, channel.id, openid, 'webhook', nickname);
-  } else if (openid && ['FRIEND_DEL', 'C2C_MSG_REJECT'].includes(event)) {
-    const user = await c.env.DB.prepare(
-      'SELECT id FROM qq_notification_users WHERE channel_id = ?1 AND openid = ?2',
-    ).bind(channel.id, openid).first<{ id: string }>();
-    if (user) await setQQUserEnabled(c.env.DB, channel.id, user.id, false);
-  }
-  return c.json({});
-});
-
 app.get('/api/health', (c) => c.json({ ok: true, providers: ['worker', 'globalping'] }));
 
 app.get('/api/auth/status', async (c) => {
@@ -991,8 +925,68 @@ app.post('/api/notifications/:id/qq/link', async (c) => {
 app.delete('/api/notifications/:id', async (c) => {
   const auth = await requireAdminResponse(c);
   if (auth) return auth;
+  const channel = await getNotificationChannelRow(c.env.DB, c.req.param('id'));
+  if (channel?.type === 'qqbot') {
+    try {
+      await qqGatewayRequest(c.env, channel.id, '/stop', { method: 'POST' });
+    } catch (error) {
+      console.warn(`[notifications] QQ Gateway stop before delete failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   const result = await c.env.DB.prepare('DELETE FROM notification_channels WHERE id = ?1').bind(c.req.param('id')).run();
   return result.meta.changes ? c.json({ ok: true }) : c.json({ error: '通知配置不存在' }, 404);
+});
+
+async function qqGatewayRequest(
+  env: Env,
+  channelId: string,
+  path: '/start' | '/stop' | '/status',
+  init: RequestInit = {},
+): Promise<Response> {
+  const id = env.QQ_GATEWAY.idFromName(channelId);
+  const stub = env.QQ_GATEWAY.get(id);
+  return stub.fetch(`https://qq-gateway.internal${path}`, init);
+}
+
+app.get('/api/notifications/:id/qq/gateway/status', async (c) => {
+  const auth = await requireAdminResponse(c);
+  if (auth) return auth;
+  const channel = await getNotificationChannelRow(c.env.DB, c.req.param('id'));
+  if (!channel || channel.type !== 'qqbot') return c.json({ error: 'QQ 通知配置不存在' }, 404);
+  const response = await qqGatewayRequest(c.env, channel.id, '/status');
+  return new Response(await response.text(), {
+    status: response.status,
+    headers: { 'content-type': 'application/json; charset=utf-8' },
+  });
+});
+
+app.post('/api/notifications/:id/qq/gateway/start', async (c) => {
+  const auth = await requireAdminResponse(c);
+  if (auth) return auth;
+  const channel = await getNotificationChannelRow(c.env.DB, c.req.param('id'));
+  if (!channel || channel.type !== 'qqbot') return c.json({ error: 'QQ 通知配置不存在' }, 404);
+  if (!channel.qq_app_id || !channel.qq_app_secret) return c.json({ error: '请先保存 QQ AppID 和 AppSecret' }, 409);
+  const response = await qqGatewayRequest(c.env, channel.id, '/start', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ channelId: channel.id }),
+  });
+  return new Response(await response.text(), {
+    status: response.status,
+    headers: { 'content-type': 'application/json; charset=utf-8' },
+  });
+});
+
+app.post('/api/notifications/:id/qq/gateway/stop', async (c) => {
+  const auth = await requireAdminResponse(c);
+  if (auth) return auth;
+  const channel = await getNotificationChannelRow(c.env.DB, c.req.param('id'));
+  if (!channel || channel.type !== 'qqbot') return c.json({ error: 'QQ 通知配置不存在' }, 404);
+  const response = await qqGatewayRequest(c.env, channel.id, '/stop', { method: 'POST' });
+  return new Response(await response.text(), {
+    status: response.status,
+    headers: { 'content-type': 'application/json; charset=utf-8' },
+  });
 });
 
 app.post('/api/notifications/:id/test', async (c) => {
@@ -1581,3 +1575,5 @@ export default {
     ctx.waitUntil(runScheduler(env));
   },
 };
+
+export { QQGateway } from './qq-gateway';
