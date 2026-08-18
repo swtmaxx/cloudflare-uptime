@@ -35,7 +35,9 @@
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["QQGateway"]
+      "new_sqlite_classes": [
+        "QQGateway"
+      ]
     }
   ],
   "rules": [
