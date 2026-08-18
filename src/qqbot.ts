@@ -55,6 +55,10 @@ interface QQAccessTokenResponse {
 interface QQAddLinkResponse {
   url_link?: unknown;
   url?: unknown;
+  data?: {
+    url_link?: unknown;
+    url?: unknown;
+  };
 }
 
 function asString(value: unknown): string | null {
@@ -194,7 +198,10 @@ export async function generateQQAddLink(db: D1Database, channel: QQChannelRow): 
     method: 'POST',
     body: JSON.stringify({ callback_data: callbackData }),
   });
-  const url = asString(payload.url_link) || asString(payload.url);
+  const url = asString(payload.url_link)
+    || asString(payload.url)
+    || asString(payload.data?.url_link)
+    || asString(payload.data?.url);
   if (!url) throw new QQBotError('QQ API 没有返回机器人添加链接', 'LINK_MISSING');
   return url;
 }
