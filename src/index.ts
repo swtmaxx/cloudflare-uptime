@@ -14,7 +14,7 @@ import {
   validPassword,
   verifyAdminPassword,
 } from './auth';
-import { fetchGlobalpingLocations } from './globalping';
+import { fetchGlobalpingLocations, fetchGlobalpingProbes } from './globalping';
 import {
   getMonitor,
   getAppSetting,
@@ -737,6 +737,12 @@ app.get('/api/globalping/locations', async (c) => {
   const auth = await requireAdminResponse(c);
   if (auth) return auth;
   return c.json({ locations: await fetchGlobalpingLocations(c.env.DB) });
+});
+
+app.get('/api/globalping/probes', async (c) => {
+  const auth = await requireAdminResponse(c);
+  if (auth) return auth;
+  return c.json(await fetchGlobalpingProbes(c.env.DB));
 });
 
 app.get('/api/tags', async (c) => {

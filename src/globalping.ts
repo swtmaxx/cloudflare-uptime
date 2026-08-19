@@ -1,7 +1,7 @@
 import { ProviderError, type ParsedProbeResult } from './provider';
 import { getAppSetting } from './db';
 import type { D1Database } from '@cloudflare/workers-types';
-import type { Env, GlobalpingLocation, Monitor, ProbeNode } from './types';
+import type { Env, GlobalpingLocation, GlobalpingProbe, Monitor, ProbeNode } from './types';
 
 const GLOBALPING_BASE = 'https://api.globalping.io';
 const USER_AGENT = 'Cloudflare-Uptime/0.1 (Globalping provider)';
@@ -9,8 +9,8 @@ const GLOBALPING_REQUEST_TIMEOUT_MS = 30_000;
 const GLOBALPING_LOCATIONS_CACHE_KEY = 'globalping_locations_cache';
 const GLOBALPING_LOCATIONS_CACHE_TTL_MS = 10 * 60 * 1000;
 
-// Globalping accepts country/city location rules directly. Do not download the
-// multi-megabyte /v1/probes inventory just to populate this picker.
+// The monitor picker uses this compact location list. The full probe inventory
+// is fetched separately by the administrator's Globalping nodes page.
 const COMMON_GLOBALPING_LOCATIONS: GlobalpingLocationOption[] = [
   ['CN', 'Beijing'], ['CN', 'Shanghai'], ['CN', 'Guangzhou'], ['CN', 'Hong Kong'],
   ['JP', 'Tokyo'], ['KR', 'Seoul'], ['SG', 'Singapore'], ['TW', 'Taipei'],
@@ -35,7 +35,7 @@ export interface GlobalpingLocationOption {
   probes: number;
 }
 
-interface GlobalpingProbe {
+interface GlobalpingMeasurementProbe {
   location?: {
     country?: unknown;
     city?: unknown;
@@ -48,6 +48,10 @@ interface GlobalpingProbe {
 
 interface GlobalpingStartResponse {
   id?: unknown;
+}
+
+interface GlobalpingProbeListResponse {
+  probes?: unknown;
 }
 
 interface GlobalpingHttpResult {
@@ -69,13 +73,45 @@ interface GlobalpingMeasurementResponse {
   type?: unknown;
   status?: unknown;
   results?: Array<{
-    probe?: GlobalpingProbe;
+    probe?: GlobalpingMeasurementProbe;
     result?: GlobalpingHttpResult;
   }>;
 }
 
+function parseGlobalpingProbe(value: unknown): GlobalpingProbe | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const location = record.location && typeof record.location === 'object' && !Array.isArray(record.location)
+    ? record.location as Record<string, unknown>
+    : {};
+  const network = record.network && typeof record.network === 'object' && !Array.isArray(record.network)
+    ? record.network as Record<string, unknown>
+    : {};
+  const country = asString(record.country) || asString(record.countryCode) || asString(location.country) || '??';
+  const city = asString(record.city) || asString(location.city) || 'Unknown';
+  const id = asIdentifier(record.id);
+  if (!id) return null;
+  const asn = asNumber(record.asn) ?? asNumber(location.asn) ?? asNumber(network.asn);
+  const ip = asString(record.ip) || asString(record.address) || asString(network.ip) || asString(network.ipv4);
+  const status = asString(record.status);
+  return {
+    id,
+    countryCode: country.toUpperCase(),
+    city,
+    asn: asn === null ? null : String(asn),
+    ip,
+    online: record.online === false ? false : status ? status.toLowerCase() === 'online' : true,
+  };
+}
+
 function asString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function asIdentifier(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return null;
 }
 
 function asNumber(value: unknown): number | null {
@@ -160,6 +196,19 @@ export async function fetchGlobalpingLocations(db: D1Database): Promise<Globalpi
   return result;
 }
 
+export async function fetchGlobalpingProbes(db: D1Database): Promise<{ probes: GlobalpingProbe[]; updatedAt: string }> {
+  const payload = await requestJson<GlobalpingProbeListResponse | unknown[]>(
+    await getAppSetting(db, 'globalping_token'),
+    `${GLOBALPING_BASE}/v1/probes`,
+  );
+  const rawProbes = Array.isArray(payload) ? payload : payload.probes;
+  const probes = Array.isArray(rawProbes)
+    ? rawProbes.map(parseGlobalpingProbe).filter((probe): probe is GlobalpingProbe => Boolean(probe))
+    : [];
+  if (!probes.length) throw new GlobalpingError('Globalping 没有返回探针列表', 'INVALID_PROBES');
+  return { probes, updatedAt: new Date().toISOString() };
+}
+
 function measurementLocation(location: GlobalpingLocation): Record<string, unknown> {
   return {
     country: location.country.toUpperCase(),
@@ -219,7 +268,7 @@ export async function startGlobalpingCheck(env: Env, monitor: Monitor): Promise<
   return id;
 }
 
-function syntheticNode(probe: GlobalpingProbe | undefined, resolvedIp: string | null): ProbeNode {
+function syntheticNode(probe: GlobalpingMeasurementProbe | undefined, resolvedIp: string | null): ProbeNode {
   const country = (asString(probe?.country) || asString(probe?.location?.country))?.toLowerCase() || '??';
   const city = asString(probe?.city) || asString(probe?.location?.city) || 'Unknown';
   const asn = asNumber(probe?.asn) ?? asNumber(probe?.location?.asn);

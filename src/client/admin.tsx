@@ -1,14 +1,14 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, ApiError } from './api';
 import { Empty, HeartbeatBar, Modal, PageHead, StatusBadge, TagList } from './components';
 import { MonitorForm, TagManager } from './monitoring';
 import { SettingsView } from './settings';
 import { StatusPagesView } from './status-pages';
 import { NotificationsView } from './notifications';
-import type { AdminSettings, CheckResult, Monitor, StatusPage, Tag, User } from './types';
+import type { AdminSettings, CheckResult, GlobalpingProbe, Monitor, StatusPage, Tag, User } from './types';
 import { formatAdminDate, formatDate, formatMs, providerLabel, statusLabel, typeLabel } from './utils';
 
-type View = 'overview' | 'monitors' | 'history' | 'notifications' | 'status-pages' | 'settings' | 'about';
+type View = 'overview' | 'monitors' | 'history' | 'globalping' | 'notifications' | 'status-pages' | 'settings' | 'about';
 type Notify = (message: string, error?: boolean) => void;
 
 function Brand(): JSX.Element {
@@ -36,7 +36,7 @@ function Toast({ message, error }: { message: string; error: boolean }): JSX.Ele
 }
 
 function Shell({ user, view, setView, onLogout, onRefresh, children }: { user: User; view: View; setView: (view: View) => void; onLogout: () => void; onRefresh: () => void; children: ReactNode }): JSX.Element {
-  const nav: Array<[View, string, string]> = [['overview', '◉', '总览'], ['monitors', '◌', '监控管理'], ['history', '▤', '检查记录'], ['notifications', '✦', '通知设置'], ['status-pages', '□', '公开状态页'], ['settings', '⚙', '系统设置'], ['about', 'ⓘ', '关于']];
+  const nav: Array<[View, string, string]> = [['overview', '◉', '总览'], ['monitors', '◌', '监控管理'], ['history', '▤', '检查记录'], ['globalping', '⌁', 'Globalping 节点'], ['notifications', '✦', '通知设置'], ['status-pages', '□', '公开状态页'], ['settings', '⚙', '系统设置'], ['about', 'ⓘ', '关于']];
   return <div className="app-shell"><aside className="sidebar"><Brand /><div className="nav-label">Workspace</div><nav className="nav">{nav.map(([id, glyph, label]) => <button className={`nav-button ${view === id ? 'active' : ''}`} key={id} type="button" onClick={() => setView(id)}><span className="nav-glyph">{glyph}</span><span>{label}</span></button>)}</nav><div className="sidebar-foot"><div className="user-line"><span>{user.username}</span><button className="button text-button" type="button" onClick={onLogout}>退出</button></div><div>Worker + Globalping</div></div></aside><main className="main"><header className="topbar"><span className="topbar-title">单 Worker · D1 · 可用性监控</span><div className="topbar-actions"><span className="muted">每分钟调度</span><button className="button small ghost" type="button" onClick={onRefresh}>刷新</button></div></header><div className="content">{children}</div></main></div>;
 }
 
@@ -57,6 +57,46 @@ function HistoryView({ notify }: { notify: Notify }): JSX.Element {
   const clear = async (all: boolean) => { if (!window.confirm(all ? '清理所有监控的历史记录？' : '清理当前监控的全部历史记录？')) return; try { await api(all ? '/api/history' : `/api/monitors/${monitorId}/history`, { method: 'DELETE' }); setResults([]); notify(all ? '全部历史已清理' : '当前监控历史已清理'); } catch (reason) { notify(reason instanceof Error ? reason.message : '清理失败', true); } };
   const monitor = monitors.find((item) => item.id === monitorId);
   return <><PageHead kicker="Check history" title="检查记录" note="查看每个探测节点的原始结果；系统不会单独创建故障事件。" action={<button className="button small ghost danger" type="button" onClick={() => clear(true)}>清理全部历史</button>} /><div className="filter-bar"><select value={monitorId} onChange={(event) => setMonitorId(event.target.value)}><option value="">选择监控</option>{monitors.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select><button className="button small ghost danger" type="button" disabled={!monitorId} onClick={() => clear(false)}>清理当前监控</button></div><div className="panel table-wrap">{monitor ? results.length ? <table><thead><tr><th>节点</th><th>结果</th><th>耗时</th><th>状态码</th><th>说明</th><th>时间</th></tr></thead><tbody>{results.map((item, index) => <tr key={`${item.nodeId}-${item.checkedAt}-${index}`}><td>{item.node ? `${item.node.countryName} · ${item.node.city}` : item.nodeId}</td><td><StatusBadge status={item.success ? 'up' : 'down'} /></td><td>{formatMs(item.latencyMs)}</td><td>{item.statusCode || '—'}</td><td>{item.message || '—'}</td><td>{formatDate(item.checkedAt)}</td></tr>)}</tbody></table> : <Empty title="暂无记录" note="下一次探测任务完成后会显示结果。" /> : <Empty title="暂无监控" note="创建监控后会产生检查记录。" />}</div></>;
+}
+
+function GlobalpingProbesView({ notify }: { notify: Notify }): JSX.Element {
+  const [probes, setProbes] = useState<GlobalpingProbe[]>([]);
+  const [search, setSearch] = useState('');
+  const [country, setCountry] = useState('');
+  const [status, setStatus] = useState('');
+  const [page, setPage] = useState(1);
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const pageSize = 50;
+
+  const load = useCallback(() => {
+    setLoading(true);
+    api<{ probes: GlobalpingProbe[]; updatedAt: string }>('/api/globalping/probes')
+      .then((data) => { setProbes(data.probes || []); setUpdatedAt(data.updatedAt || null); setPage(1); })
+      .catch((reason) => notify(reason instanceof Error ? reason.message : '无法读取 Globalping 节点', true))
+      .finally(() => setLoading(false));
+  }, [notify]);
+  useEffect(() => { load(); }, [load]);
+
+  const countries = useMemo(() => [...new Set(probes.map((probe) => probe.countryCode))].sort(), [probes]);
+  const filtered = useMemo(() => {
+    const needle = search.trim().toLocaleLowerCase();
+    return probes.filter((probe) => {
+      const matchesSearch = !needle || [probe.id, probe.countryCode, probe.city, probe.asn || '', probe.ip || '']
+        .some((value) => value.toLocaleLowerCase().includes(needle));
+      return matchesSearch && (!country || probe.countryCode === country) && (!status || (status === 'online' ? probe.online : !probe.online));
+    });
+  }, [probes, search, country, status]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const visible = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const onlineCount = probes.filter((probe) => probe.online).length;
+  const cityCount = new Set(probes.map((probe) => `${probe.countryCode}\u0000${probe.city}`)).size;
+  const updateSearch = (value: string) => { setSearch(value); setPage(1); };
+  const updateCountry = (value: string) => { setCountry(value); setPage(1); };
+  const updateStatus = (value: string) => { setStatus(value); setPage(1); };
+
+  return <><PageHead kicker="Globalping" title="探测节点" note="查看 Globalping 当前公开的全部在线与离线探针。" action={<button className="button small ghost" type="button" onClick={load} disabled={loading}>{loading ? '读取中…' : '刷新节点'}</button>} /><div className="metric-grid probe-metric-grid"><div className="metric"><div className="metric-label">全部节点</div><div className="metric-value">{probes.length}</div></div><div className="metric"><div className="metric-label">在线节点</div><div className="metric-value mint">{onlineCount}</div></div><div className="metric"><div className="metric-label">国家</div><div className="metric-value">{countries.length}</div></div><div className="metric"><div className="metric-label">城市</div><div className="metric-value">{cityCount}</div></div></div><div className="section"><div className="filter-bar"><input className="filter-search" value={search} onChange={(event) => updateSearch(event.target.value)} placeholder="搜索 ID、国家、城市、IP 或 ASN" /><select value={country} onChange={(event) => updateCountry(event.target.value)}><option value="">全部国家</option>{countries.map((item) => <option value={item} key={item}>{item}</option>)}</select><select value={status} onChange={(event) => updateStatus(event.target.value)}><option value="">全部状态</option><option value="online">在线</option><option value="offline">离线</option></select></div><div className="section-head probe-list-head"><h2 className="section-title">节点列表</h2><span className="muted">{loading ? '正在读取 Globalping 节点…' : `显示 ${filtered.length} 个匹配节点${updatedAt ? ` · 更新于 ${formatDate(updatedAt)}` : ''}`}</span></div><div className="panel table-wrap">{visible.length ? <table><thead><tr><th>状态</th><th>节点 ID</th><th>国家</th><th>城市</th><th>IP 地址</th><th>ASN</th></tr></thead><tbody>{visible.map((probe) => <tr key={probe.id}><td><span className={`probe-status ${probe.online ? 'online' : 'offline'}`}><i className="status-dot" />{probe.online ? '在线' : '离线'}</span></td><td className="mono">{probe.id}</td><td>{probe.countryCode}</td><td>{probe.city}</td><td className="mono">{probe.ip || '—'}</td><td className="mono">{probe.asn || '—'}</td></tr>)}</tbody></table> : <Empty title={loading ? '正在读取节点' : probes.length ? '没有匹配节点' : '暂无节点数据'} note={loading ? '正在从 Globalping 获取完整探针列表。' : probes.length ? '调整搜索或筛选条件。' : 'Globalping 没有返回可显示的探针。'} />}</div>{filtered.length ? <div className="pagination"><button className="button small ghost" type="button" disabled={currentPage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>上一页</button><span className="muted">第 {currentPage} / {pageCount} 页</span><button className="button small ghost" type="button" disabled={currentPage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>下一页</button></div> : null}</div></>;
 }
 
 function AboutView({ settings, user }: { settings: AdminSettings; user: User }): JSX.Element {
@@ -84,6 +124,7 @@ export function AdminApp(): JSX.Element {
   if (view === 'overview') content = <OverviewView onNavigate={setView} notify={notify} />;
   else if (view === 'monitors') content = <MonitorView settings={settings} notify={notify} />;
   else if (view === 'history') content = <HistoryView notify={notify} />;
+  else if (view === 'globalping') content = <GlobalpingProbesView notify={notify} />;
   else if (view === 'notifications') content = <NotificationsView notify={notify} />;
   else if (view === 'status-pages') content = <StatusPagesView notify={notify} />;
   else if (view === 'settings') content = <SettingsView settings={settings} user={user} setSettings={setSettings} notify={notify} />;

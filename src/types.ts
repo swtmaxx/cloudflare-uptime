@@ -20,6 +20,15 @@ export interface GlobalpingLocation {
   city?: string;
 }
 
+export interface GlobalpingProbe {
+  id: string;
+  countryCode: string;
+  city: string;
+  asn: string | null;
+  ip: string | null;
+  online: boolean;
+}
+
 export interface ProbeNode {
   id: string;
   provider: MonitorProvider;

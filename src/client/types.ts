@@ -25,6 +25,15 @@ export interface GlobalpingLocation {
   probes?: number;
 }
 
+export interface GlobalpingProbe {
+  id: string;
+  countryCode: string;
+  city: string;
+  asn: string | null;
+  ip: string | null;
+  online: boolean;
+}
+
 export interface Heartbeat {
   id: string;
   status: Exclude<MonitorStatus, 'paused'>;

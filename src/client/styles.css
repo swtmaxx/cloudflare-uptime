@@ -213,6 +213,15 @@
       .heartbeat-bar span.down { background: var(--red); }
       .heartbeat-bar span.unknown { background: #62717d; }
       .heartbeat-caption { color: var(--muted); font-size: 11px; margin-top: 4px; }
+      .probe-metric-grid { margin-bottom: 22px; }
+      .probe-list-head { margin-top: 7px; }
+      .probe-status { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; color: var(--muted); }
+      .probe-status .status-dot { width: 7px; height: 7px; margin: 0; background: var(--muted); }
+      .probe-status.online { color: var(--mint); }
+      .probe-status.online .status-dot { background: var(--mint); }
+      .probe-status.offline { color: var(--red); }
+      .probe-status.offline .status-dot { background: var(--red); }
+      .pagination { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 14px; }
       .form-grid textarea, textarea { width: 100%; min-height: 86px; resize: vertical; color: var(--text); background: #10171e; border: 1px solid var(--line); border-radius: 4px; padding: 10px 11px; outline: none; line-height: 1.5; }
       textarea:focus { border-color: var(--mint); box-shadow: 0 0 0 2px rgba(94,224,178,.1); }
       .check-row { display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: center; }
