@@ -172,7 +172,7 @@ export async function collectJob(env: Env, jobId: string): Promise<'completed' |
   }
 
   try {
-    const result = await getGlobalpingResults(env, job.request_id);
+    const result = await getGlobalpingResults(env, job.request_id, monitor.type);
     if (!result.ready) {
       await env.DB.prepare(
         `UPDATE check_jobs

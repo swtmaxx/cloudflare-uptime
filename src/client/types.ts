@@ -35,7 +35,7 @@ export interface Heartbeat {
 export interface Monitor {
   id: string;
   name: string;
-  type: 'http' | 'tcp';
+  type: 'http' | 'tcp' | 'ping';
   provider: 'worker' | 'globalping';
   httpMethod: 'GET' | 'HEAD' | 'OPTIONS' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   targetUrl: string | null;

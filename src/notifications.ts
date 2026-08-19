@@ -313,7 +313,7 @@ function statusText(eventType: NotificationEventType): string {
 
 function notificationContent(monitor: Monitor, eventType: NotificationEventType, checkedAt: string): { html: string; text: string; title: string } {
   const state = statusText(eventType);
-  const target = monitor.targetUrl || `${monitor.host || ''}:${monitor.port || ''}`;
+  const target = monitor.targetUrl || (monitor.type === 'tcp' ? `${monitor.host || ''}:${monitor.port || ''}` : monitor.host || '');
   return {
     title: `${state} · ${monitor.name}`,
     html: [

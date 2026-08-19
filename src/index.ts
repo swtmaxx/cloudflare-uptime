@@ -218,7 +218,7 @@ async function parseMonitorInput(env: Env, body: Record<string, unknown>): Promi
   const name = textField(body.name, '监控名称', 1, 80);
   const tagIds = await validateTagIds(env, body.tagIds);
   const type = body.type;
-  if (type !== 'http' && type !== 'tcp') throw new ValidationError('监控类型只能是 HTTP 或 TCP');
+  if (type !== 'http' && type !== 'tcp' && type !== 'ping') throw new ValidationError('监控类型只能是 HTTP、TCP 或 Ping');
   const provider = providerField(body.provider);
   const enabled = body.enabled === undefined ? true : body.enabled === true;
   const intervalMinutes = integerField(body.intervalMinutes === undefined ? 1 : body.intervalMinutes, '检查频率', 1, 60);
@@ -277,6 +277,29 @@ async function parseMonitorInput(env: Env, body: Record<string, unknown>): Promi
       url,
       targetUrl: parsed.toString(),
       globalpingLocations: [],
+      tagIds,
+      enabled,
+    };
+  }
+
+  if (type === 'ping') {
+    if (provider !== 'globalping') throw new ValidationError('Ping 监控必须使用 Globalping');
+    const host = textField(body.host, 'Ping 主机', 1, 253);
+    if (/\s/.test(host) || host.includes('/') || host.includes(':')) throw new ValidationError('Ping 主机必须是域名或 IP 地址');
+    return {
+      name,
+      type,
+      provider,
+      httpMethod: 'GET',
+      requestHeaders: {},
+      requestBody: '',
+      expectedStatusCodes: [],
+      responseKeyword: '',
+      timeoutSeconds: integerField(body.timeoutSeconds === undefined ? 10 : body.timeoutSeconds, 'Ping 超时', 1, 30),
+      intervalSeconds,
+      host,
+      port: undefined,
+      globalpingLocations: validateGlobalpingLocations(body.globalpingLocations, await maximumNodes(env)),
       tagIds,
       enabled,
     };

@@ -15,7 +15,7 @@ import type {
 export type MonitorRow = {
   id: string;
   name: string;
-  type: 'http' | 'tcp';
+  type: Monitor['type'];
   provider: Monitor['provider'];
   http_method: Monitor['httpMethod'];
   target_url: string | null;

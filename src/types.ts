@@ -4,7 +4,7 @@ export interface Env {
   QQ_GATEWAY: DurableObjectNamespace;
 }
 
-export type MonitorType = 'http' | 'tcp';
+export type MonitorType = 'http' | 'tcp' | 'ping';
 export type MonitorProvider = 'worker' | 'globalping';
 export type HttpMethod = 'GET' | 'HEAD' | 'OPTIONS' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 export type MonitorStatus = 'up' | 'degraded' | 'down' | 'unknown' | 'paused';

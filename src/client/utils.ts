@@ -9,7 +9,7 @@ export const statusLabel = (value: string): string => ({
   paused: '已暂停',
 }[value] || '未知');
 
-export const typeLabel = (value: string): string => value === 'tcp' ? 'TCP' : 'HTTP';
+export const typeLabel = (value: string): string => value === 'tcp' ? 'TCP' : value === 'ping' ? 'Ping' : 'HTTP';
 export const providerLabel = (value: string): string => value === 'globalping' ? 'Globalping' : 'Worker';
 export const formatMs = (value: number | null | undefined): string => value === null || value === undefined ? '—' : `${value} ms`;
 export const formatDate = (value: string | null | undefined): string => value

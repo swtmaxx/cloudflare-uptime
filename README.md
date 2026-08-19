@@ -7,6 +7,7 @@
 ## 当前能力
 
 - Worker 直接执行 HTTP/HTTPS 和 TCP 端口检查
+- Globalping 支持远程 ICMP Ping，记录平均延迟和丢包率
 - Worker HTTP 支持方法、请求头、请求体、成功状态码、响应关键字和超时
 - HTTP 监控可按监控选择 Worker 或 Globalping
 - Globalping 支持国家/城市位置规则
@@ -20,7 +21,7 @@
 
 通知只保存当前发送状态，不建立单独的故障事件历史。PushPlus Token、QQ AppSecret 和 Globalping Token 由后台写入 D1，管理接口只返回是否已配置，不返回明文密钥。
 
-Globalping 在本版本中实现基础 HTTP 方法和多地区位置检查；需要 API 请求头、请求体或响应断言时使用 Worker 探测。
+Globalping 在本版本中实现基础 HTTP 方法、多地区位置检查和 Ping；需要 API 请求头、请求体或响应断言时使用 Worker 探测。
 
 ## 本地运行
 

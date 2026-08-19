@@ -56,10 +56,17 @@ interface GlobalpingHttpResult {
   statusCodeName?: unknown;
   rawOutput?: unknown;
   resolvedAddress?: unknown;
-  timings?: { total?: unknown };
+  timings?: { total?: unknown } | Array<{ rtt?: unknown }>;
+  stats?: {
+    avg?: unknown;
+    loss?: unknown;
+    rcv?: unknown;
+    total?: unknown;
+  };
 }
 
 interface GlobalpingMeasurementResponse {
+  type?: unknown;
   status?: unknown;
   results?: Array<{
     probe?: GlobalpingProbe;
@@ -162,6 +169,13 @@ function measurementLocation(location: GlobalpingLocation): Record<string, unkno
 }
 
 function measurementTarget(monitor: Monitor): { target: string; options: Record<string, unknown> } {
+  if (monitor.type === 'ping') {
+    if (!monitor.host) throw new GlobalpingError('Globalping Ping 监控缺少主机', 'INVALID_TARGET');
+    return {
+      target: monitor.host,
+      options: { packets: 5 },
+    };
+  }
   if (!monitor.targetUrl) throw new GlobalpingError('Globalping HTTP 监控缺少 URL', 'INVALID_TARGET');
   let url: URL;
   try {
@@ -187,14 +201,14 @@ function measurementTarget(monitor: Monitor): { target: string; options: Record<
 }
 
 export async function startGlobalpingCheck(env: Env, monitor: Monitor): Promise<string> {
-  if (monitor.type !== 'http') throw new GlobalpingError('Globalping 只支持 HTTP/HTTPS 监控', 'UNSUPPORTED_TYPE');
+  if (monitor.type !== 'http' && monitor.type !== 'ping') throw new GlobalpingError('Globalping 只支持 HTTP/HTTPS 和 Ping 监控', 'UNSUPPORTED_TYPE');
   if (!monitor.globalpingLocations.length) throw new GlobalpingError('没有选择 Globalping 探测位置', 'NO_LOCATIONS');
 
   const { target, options } = measurementTarget(monitor);
   const payload = await requestJson<GlobalpingStartResponse>(await getAppSetting(env.DB, 'globalping_token'), `${GLOBALPING_BASE}/v1/measurements`, {
     method: 'POST',
     body: JSON.stringify({
-      type: 'http',
+      type: monitor.type,
       target,
       locations: monitor.globalpingLocations.map(measurementLocation),
       measurementOptions: options,
@@ -226,6 +240,7 @@ function syntheticNode(probe: GlobalpingProbe | undefined, resolvedIp: string | 
 export async function getGlobalpingResults(
   env: Env,
   requestId: string,
+  monitorType: Monitor['type'] = 'http',
 ): Promise<{ ready: boolean; results: ParsedProbeResult[] }> {
   const payload = await requestJson<GlobalpingMeasurementResponse>(await getAppSetting(env.DB, 'globalping_token'), `${GLOBALPING_BASE}/v1/measurements/${encodeURIComponent(requestId)}`);
   if (payload.status === 'in-progress') return { ready: false, results: [] };
@@ -238,15 +253,37 @@ export async function getGlobalpingResults(
     const raw = item.result || {};
     const resolvedIp = asString(raw.resolvedAddress);
     const probe = syntheticNode(item.probe, resolvedIp);
+    if ((payload.type || monitorType) === 'ping') {
+      const stats = raw.stats || {};
+      const received = asNumber(stats.rcv) || 0;
+      const loss = asNumber(stats.loss);
+      const average = asNumber(stats.avg);
+      const success = raw.status === 'finished' && received > 0;
+      const lossLabel = loss === null ? '未知' : `${loss}%`;
+      const message = success
+        ? `平均 ${average === null ? '未知' : `${average} ms`} · 丢包 ${lossLabel}`
+        : `Ping 失败 · 丢包 ${lossLabel}`;
+      results.push({
+        nodeId: probe.id,
+        probe,
+        success,
+        latencyMs: average === null ? null : Math.round(average),
+        statusCode: null,
+        message,
+        resolvedIp,
+      });
+      continue;
+    }
     const statusCode = asNumber(raw.statusCode);
     const finished = raw.status === 'finished';
     const success = finished && statusCode !== null && statusCode >= 200 && statusCode < 400;
     const message = asString(raw.statusCodeName) || asString(raw.rawOutput) || asString(raw.status) || (success ? 'HTTP check passed' : 'HTTP check failed');
+    const totalTiming = raw.timings && !Array.isArray(raw.timings) ? asNumber(raw.timings.total) : null;
     results.push({
       nodeId: probe.id,
       probe,
       success,
-      latencyMs: asNumber(raw.timings?.total) === null ? null : Math.round(asNumber(raw.timings?.total) as number),
+      latencyMs: totalTiming === null ? null : Math.round(totalTiming),
       statusCode,
       message,
       resolvedIp,
