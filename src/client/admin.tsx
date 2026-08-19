@@ -11,6 +11,28 @@ import { formatAdminDate, formatDate, formatMs, providerLabel, statusLabel, type
 type View = 'overview' | 'monitors' | 'history' | 'globalping' | 'notifications' | 'status-pages' | 'settings' | 'about';
 type Notify = (message: string, error?: boolean) => void;
 
+const ADMIN_VIEW_PATHS: Record<View, string> = {
+  overview: '/admin',
+  monitors: '/admin/monitors',
+  history: '/admin/history',
+  globalping: '/admin/globalping',
+  notifications: '/admin/notifications',
+  'status-pages': '/admin/status-pages',
+  settings: '/admin/settings',
+  about: '/admin/about',
+};
+
+function viewFromPath(pathname: string): View {
+  const slug = pathname.match(/^\/admin(?:\/([^/]+))?\/?$/)?.[1];
+  if (!slug) return 'overview';
+  const view = (Object.keys(ADMIN_VIEW_PATHS) as View[]).find((key) => ADMIN_VIEW_PATHS[key] === `/admin/${slug}`);
+  return view || 'overview';
+}
+
+function pathForView(view: View): string {
+  return ADMIN_VIEW_PATHS[view];
+}
+
 function Brand(): JSX.Element {
   return <div className="brand"><div className="brand-mark">P</div><div className="brand-copy"><div className="brand-name">Pulseboard</div><div className="brand-sub">uptime control room</div></div></div>;
 }
@@ -107,13 +129,25 @@ export function AdminApp(): JSX.Element {
   const [user, setUser] = useState<User | null>(null);
   const [setupRequired, setSetupRequired] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<View>('overview');
+  const [view, setView] = useState<View>(() => viewFromPath(window.location.pathname));
   const [settings, setSettings] = useState<AdminSettings | null>(null);
   const [toast, setToast] = useState({ message: '', error: false });
   const notify: Notify = (message, error = false) => { setToast({ message, error }); window.setTimeout(() => setToast({ message: '', error: false }), 3600); };
   const loadStatus = async () => { try { const data = await api<{ setupRequired: boolean; authenticated: boolean; user: User | null }>('/api/auth/status'); setSetupRequired(data.setupRequired); setUser(data.user); } catch (reason) { notify(reason instanceof Error ? reason.message : '无法连接数据库', true); } finally { setLoading(false); } };
   useEffect(() => { loadStatus(); }, []);
+  useEffect(() => {
+    const onPopState = () => setView(viewFromPath(window.location.pathname));
+    window.addEventListener('popstate', onPopState);
+    const canonicalPath = pathForView(view);
+    if (window.location.pathname !== canonicalPath) window.history.replaceState({ view }, '', canonicalPath);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
   useEffect(() => { if (!user) return; api<{ settings: AdminSettings }>('/api/settings/admin').then((data) => setSettings(data.settings)).catch((reason) => notify(reason instanceof Error ? reason.message : '无法读取设置', true)); }, [user]);
+  const navigate = useCallback((nextView: View) => {
+    const nextPath = pathForView(nextView);
+    if (window.location.pathname !== nextPath) window.history.pushState({ view: nextView }, '', nextPath);
+    setView(nextView);
+  }, []);
   if (loading) return <main className="auth-page"><section className="auth-box"><Brand /><p className="auth-note">正在连接控制台...</p></section></main>;
   if (setupRequired) return <AuthPage setup onAuthenticated={(next) => { setUser(next); setSetupRequired(false); }} />;
   if (!user) return <AuthPage setup={false} onAuthenticated={setUser} />;
@@ -121,7 +155,7 @@ export function AdminApp(): JSX.Element {
   const refresh = () => { if (view === 'settings') setSettings(null); else setView(view); window.location.reload(); };
   const logout = async () => { await api('/api/auth/logout', { method: 'POST' }).catch(() => undefined); setUser(null); setSettings(null); };
   let content: JSX.Element;
-  if (view === 'overview') content = <OverviewView onNavigate={setView} notify={notify} />;
+  if (view === 'overview') content = <OverviewView onNavigate={navigate} notify={notify} />;
   else if (view === 'monitors') content = <MonitorView settings={settings} notify={notify} />;
   else if (view === 'history') content = <HistoryView notify={notify} />;
   else if (view === 'globalping') content = <GlobalpingProbesView notify={notify} />;
@@ -129,7 +163,7 @@ export function AdminApp(): JSX.Element {
   else if (view === 'status-pages') content = <StatusPagesView notify={notify} />;
   else if (view === 'settings') content = <SettingsView settings={settings} user={user} setSettings={setSettings} notify={notify} />;
   else content = <AboutView settings={settings} user={user} />;
-  return <><Shell user={user} view={view} setView={setView} onLogout={logout} onRefresh={refresh}>{content}</Shell><Toast message={toast.message} error={toast.error} /></>;
+  return <><Shell user={user} view={view} setView={navigate} onLogout={logout} onRefresh={refresh}>{content}</Shell><Toast message={toast.message} error={toast.error} /></>;
 }
 
 interface MonitorViewProps { settings: AdminSettings; notify: Notify; }
