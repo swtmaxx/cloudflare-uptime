@@ -89,10 +89,14 @@ function parseGlobalpingProbe(value: unknown): GlobalpingProbe | null {
     : {};
   const country = asString(record.country) || asString(record.countryCode) || asString(location.country) || '??';
   const city = asString(record.city) || asString(location.city) || 'Unknown';
-  const id = asIdentifier(record.id);
-  if (!id) return null;
+  const networkName = asString(record.network) || asString(location.network);
   const asn = asNumber(record.asn) ?? asNumber(location.asn) ?? asNumber(network.asn);
   const ip = asString(record.ip) || asString(record.address) || asString(network.ip) || asString(network.ipv4);
+  const latitude = asNumber(record.latitude) ?? asNumber(location.latitude);
+  const longitude = asNumber(record.longitude) ?? asNumber(location.longitude);
+  const tags = Array.isArray(record.tags) ? record.tags.filter((tag): tag is string => typeof tag === 'string') : [];
+  const id = asIdentifier(record.id) || `globalping:${[country, city, asn === null ? 'na' : asn, latitude ?? 'na', longitude ?? 'na', networkName || 'unknown', ...tags].join(':').toLowerCase().replace(/[^a-z0-9:.\-_]+/g, '-')}`;
+  const resolvers = Array.isArray(record.resolvers) ? record.resolvers.filter((resolver): resolver is string => typeof resolver === 'string') : [];
   const status = asString(record.status);
   return {
     id,
@@ -100,6 +104,8 @@ function parseGlobalpingProbe(value: unknown): GlobalpingProbe | null {
     city,
     asn: asn === null ? null : String(asn),
     ip,
+    network: networkName,
+    resolvers,
     online: record.online === false ? false : status ? status.toLowerCase() === 'online' : true,
   };
 }

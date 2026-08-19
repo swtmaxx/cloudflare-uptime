@@ -31,6 +31,8 @@ export interface GlobalpingProbe {
   city: string;
   asn: string | null;
   ip: string | null;
+  network: string | null;
+  resolvers: string[];
   online: boolean;
 }
 
