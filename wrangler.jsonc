@@ -38,6 +38,11 @@
       "new_sqlite_classes": [
         "QQGateway"
       ]
+    },
+    {
+      // Remote already applied this class creation; keep tags aligned to
+      // avoid re-running new_sqlite_classes on an existing DO (error 10074).
+      "tag": "v2"
     }
   ],
   "rules": [
