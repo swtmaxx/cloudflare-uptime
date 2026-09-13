@@ -41,6 +41,12 @@
     },
     {
       "tag": "v2"
+    },
+    {
+      "tag": "v3",
+      "deleted_classes": [
+        "KumaSocket"
+      ]
     }
   ],
   "rules": [
