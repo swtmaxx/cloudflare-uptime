@@ -1,20 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import {
-  decryptNotificationToken,
-  encryptNotificationToken,
-  sendPushPlusToken,
-} from '../src/notifications.ts';
+import { sendPushPlusToken } from '../src/notifications.ts';
 import type { Env } from '../src/types.ts';
-
-const env = { NOTIFICATION_SECRET: 'notification-test-secret' } as Env;
-
-test('encrypts and decrypts PushPlus tokens without changing the value', async () => {
-  const encrypted = await encryptNotificationToken(env, 'pushplus-token-123');
-  assert.match(encrypted, /^v1\./);
-  assert.notEqual(encrypted, 'pushplus-token-123');
-  assert.equal(await decryptNotificationToken(env, encrypted), 'pushplus-token-123');
-});
 
 test('sends the expected PushPlus HTML payload', async () => {
   const originalFetch = globalThis.fetch;

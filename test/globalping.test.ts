@@ -26,7 +26,11 @@ const globalpingMonitor: Monitor = {
   ],
 };
 
-const env = {} as Env;
+const env = {
+  DB: {
+    prepare: () => ({ bind: () => ({ first: async () => null }) }),
+  } as unknown as D1Database,
+} as Env;
 
 test('starts a Globalping HTTP measurement with location rules', async () => {
   const originalFetch = globalThis.fetch;
