@@ -1,4 +1,3 @@
-import type { CSSProperties } from 'react';
 import type { Heartbeat, MonitorStatus, Tag } from './types';
 
 export const statusLabel = (value: string): string => ({
@@ -42,8 +41,8 @@ export function safeMarkdown(value: string | undefined): string {
   ).join('<br>');
 }
 
-export function monitorTagStyle(tag: Tag): CSSProperties {
-  return { '--tag-color': tag.color } as CSSProperties;
+export function monitorTagStyle(tag: Tag): Record<string, string> {
+  return { '--tag-color': tag.color };
 }
 
 export function globalpingKey(location: { country: string; city?: string }): string {

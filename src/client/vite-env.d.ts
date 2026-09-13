@@ -1,11 +1,7 @@
 /// <reference types="vite/client" />
 
-import type { JSX as ReactJSX } from 'react';
-
-declare global {
-  namespace JSX {
-    type Element = ReactJSX.Element;
-  }
+declare module '*.vue' {
+  import type { DefineComponent } from 'vue';
+  const component: DefineComponent<Record<string, unknown>, Record<string, unknown>, unknown>;
+  export default component;
 }
-
-export {};
