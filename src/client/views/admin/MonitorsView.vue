@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { api } from '../../api';
 import PageHead from '../../components/PageHead.vue';
 import Empty from '../../components/Empty.vue';
@@ -8,6 +8,7 @@ import Tags from '../../components/Tags.vue';
 import HeartbeatBar from '../../components/HeartbeatBar.vue';
 import { formatAdminDate, providerLabel, typeLabel } from '../../utils';
 import type { AdminSettings, Monitor, Tag } from '../../types';
+import { onRealtimeEvent, realtimeScopeMatches } from '../../realtime';
 import MonitorForm from './MonitorForm.vue';
 import TagManager from './TagManager.vue';
 
@@ -31,7 +32,14 @@ async function load() {
   }
 }
 
-onMounted(load);
+let removeRealtimeListener: (() => void) | undefined;
+onMounted(() => {
+  void load();
+  removeRealtimeListener = onRealtimeEvent((event) => {
+    if (realtimeScopeMatches(event, ['monitor', 'history'])) void load();
+  });
+});
+onBeforeUnmount(() => removeRealtimeListener?.());
 
 const filtered = computed(() => {
   const needle = search.value.toLocaleLowerCase();
@@ -68,7 +76,7 @@ function updateTags(next: Tag[]) {
     note="每个监控每分钟发起一次检查，可按监控选择 Worker 或 Globalping。"
   >
     <template #action>
-      <button class="button primary" type="button" @click="editing = null; modal = 'monitor'">＋ 新建监控</button>
+      <a class="button primary" href="/admin/add">＋ 新建监控</a>
     </template>
   </PageHead>
 
@@ -110,6 +118,7 @@ function updateTags(next: Tag[]) {
           <td>{{ formatAdminDate(monitor.lastCheckedAt, props.settings.timeDisplay) }}</td>
           <td>
             <div class="actions">
+              <a class="button small" :href="`/admin/dashboard/${encodeURIComponent(monitor.id)}`">详情</a>
               <button class="button small" type="button" @click="runAction(`/api/monitors/${monitor.id}/check-now`, { method: 'POST' }, '检查任务已提交')">立即检查</button>
               <button class="button small ghost" type="button" @click="editing = monitor; modal = 'monitor'">编辑</button>
               <button class="button small ghost" type="button" @click="runAction(`/api/monitors/${monitor.id}`, { method: 'PATCH', body: JSON.stringify({ enabled: !monitor.enabled }) }, monitor.enabled ? '监控已暂停' : '监控已启用')">{{ monitor.enabled ? '暂停' : '启用' }}</button>

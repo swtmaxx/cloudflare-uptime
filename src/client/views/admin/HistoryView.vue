@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { api } from '../../api';
 import PageHead from '../../components/PageHead.vue';
 import Empty from '../../components/Empty.vue';
 import StatusBadge from '../../components/StatusBadge.vue';
 import { formatDate, formatMs } from '../../utils';
 import type { CheckResult, Monitor } from '../../types';
+import { onRealtimeEvent, realtimeScopeMatches } from '../../realtime';
 
 const props = defineProps<{ notify: (m: string, e?: boolean) => void }>();
 
@@ -14,14 +15,26 @@ const monitorId = ref('');
 const results = ref<CheckResult[]>([]);
 const monitor = ref<Monitor | null>(null);
 
+async function loadMonitors() {
+  try {
+    const data = await api<{ monitors: Monitor[] }>('/api/monitors');
+    monitors.value = data.monitors;
+    monitorId.value = monitorId.value || data.monitors[0]?.id || '';
+    if (monitorId.value) await loadResults(monitorId.value);
+  } catch (reason) {
+    props.notify(reason instanceof Error ? reason.message : '无法读取监控', true);
+  }
+}
+
+let removeRealtimeListener: (() => void) | undefined;
 onMounted(() => {
-  api<{ monitors: Monitor[] }>('/api/monitors')
-    .then((data) => {
-      monitors.value = data.monitors;
-      monitorId.value = monitorId.value || data.monitors[0]?.id || '';
-    })
-    .catch((reason) => props.notify(reason instanceof Error ? reason.message : '无法读取监控', true));
+  void loadMonitors();
+  removeRealtimeListener = onRealtimeEvent((event) => {
+    if (!realtimeScopeMatches(event, ['monitor', 'history'])) return;
+    void loadMonitors();
+  });
 });
+onBeforeUnmount(() => removeRealtimeListener?.());
 
 async function loadResults(id: string) {
   if (!id) { monitor.value = null; results.value = []; return; }

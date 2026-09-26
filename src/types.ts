@@ -2,7 +2,15 @@ export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
   QQ_GATEWAY: DurableObjectNamespace;
+  UPTIME_REALTIME: DurableObjectNamespace;
 }
+
+export type RealtimeScope = 'dashboard' | 'monitor' | 'history' | 'status-pages' | 'settings';
+
+export type RealtimeEvent =
+  | { version: 1; type: 'ready'; at: string }
+  | { version: 1; type: 'pong'; at: string }
+  | { version: 1; type: 'invalidate'; scope: RealtimeScope; monitorId?: string; at: string };
 
 export type MonitorType = 'http' | 'tcp' | 'ping';
 export type MonitorProvider = 'worker' | 'globalping';

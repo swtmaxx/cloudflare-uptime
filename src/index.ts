@@ -31,6 +31,7 @@ import {
   setAppSetting,
 } from './db';
 import { runScheduler, startMonitorJob } from './scheduler';
+import { broadcastRealtime, realtimeEvent } from './realtime';
 import {
   applyChannelToExistingMonitors,
   applyDefaultNotificationsToMonitor,
@@ -635,6 +636,24 @@ async function resolveEntryPage(db: D1Database): Promise<EntryPageSelection> {
 app.use('/api/*', async (c, next) => {
   c.header('Cache-Control', 'no-store');
   await next();
+  const method = c.req.method.toUpperCase();
+  const path = c.req.path;
+  if (c.res.status < 400 && ['POST', 'PATCH', 'PUT', 'DELETE'].includes(method) && !path.startsWith('/api/auth/')) {
+    const monitorMatch = path.match(/^\/api\/monitors\/([^/]+)/);
+    const monitorId = monitorMatch?.[1];
+    const scope = path.startsWith('/api/settings/')
+      ? 'settings'
+      : path.startsWith('/api/status-pages')
+        ? 'status-pages'
+        : path.startsWith('/api/monitors/') && path.includes('/history')
+          ? 'history'
+          : path.startsWith('/api/monitors')
+            ? 'monitor'
+            : 'dashboard';
+    // Complete the Durable Object broadcast before returning so local and edge
+    // runtimes deliver invalidation events consistently to open WebSockets.
+    await broadcastRealtime(c.env, realtimeEvent(scope, monitorId));
+  }
 });
 
 app.get('/api/health', (c) => c.json({ ok: true, providers: ['worker', 'globalping'] }));
@@ -642,6 +661,16 @@ app.get('/api/health', (c) => c.json({ ok: true, providers: ['worker', 'globalpi
 app.get('/api/auth/status', async (c) => {
   const user = await currentAdmin(c);
   return c.json({ setupRequired: (await adminCount(c.env)) === 0, authenticated: Boolean(user), user });
+});
+
+app.get('/api/realtime', async (c) => {
+  const auth = await requireAdminResponse(c);
+  if (auth) return auth;
+  if (c.req.header('Upgrade')?.toLowerCase() !== 'websocket') {
+    return c.json({ error: '需要 WebSocket Upgrade' }, 426);
+  }
+  const id = c.env.UPTIME_REALTIME.idFromName('dashboard');
+  return c.env.UPTIME_REALTIME.get(id).fetch(c.req.raw);
 });
 
 app.post('/api/auth/setup', async (c) => {
@@ -1161,7 +1190,8 @@ app.get('/api/monitors/:id', async (c) => {
   const auth = await requireAdminResponse(c);
   if (auth) return auth;
   const monitor = await getMonitor(c.env.DB, c.req.param('id'));
-  return monitor ? c.json({ monitor }) : c.json({ error: '监控不存在' }, 404);
+  if (!monitor) return c.json({ error: '监控不存在' }, 404);
+  return c.json({ monitor: { ...monitor, history: await listHeartbeatSummaries(c.env.DB, monitor.id) } });
 });
 
 app.patch('/api/monitors/:id', async (c) => {
@@ -1606,3 +1636,4 @@ export default {
 };
 
 export { QQGateway } from './qq-gateway';
+export { MonitorRealtime } from './monitor-realtime';

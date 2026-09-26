@@ -1,18 +1,19 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { api } from '../../api';
 import StatusBadge from '../../components/StatusBadge.vue';
 import Tags from '../../components/Tags.vue';
 import PageHead from '../../components/PageHead.vue';
 import { formatDate, formatMs, providerLabel, typeLabel } from '../../utils';
 import type { AdminSettings, Monitor } from '../../types';
+import { onRealtimeEvent, realtimeScopeMatches } from '../../realtime';
 
 const props = defineProps<{ settings: AdminSettings; notify: (m: string, e?: boolean) => void }>();
 const monitors = ref<Monitor[]>([]);
 const counts = ref<Record<string, number>>({});
 const recent = ref<Record<string, any>[]>([]);
 
-onMounted(async () => {
+async function load() {
   try {
     const data = await api<{ monitors: Monitor[]; counts: Record<string, number>; recentResults: Record<string, any>[] }>('/api/dashboard');
     monitors.value = data.monitors;
@@ -21,7 +22,16 @@ onMounted(async () => {
   } catch (reason) {
     props.notify(reason instanceof Error ? reason.message : '无法读取总览', true);
   }
+}
+
+let removeRealtimeListener: (() => void) | undefined;
+onMounted(() => {
+  void load();
+  removeRealtimeListener = onRealtimeEvent((event) => {
+    if (realtimeScopeMatches(event, ['monitor', 'history'])) void load();
+  });
 });
+onBeforeUnmount(() => removeRealtimeListener?.());
 
 function targetText(m: Monitor): string {
   return m.targetUrl || (m.type === 'tcp' ? `${m.host}:${m.port}` : m.host || '—');
@@ -43,7 +53,7 @@ function targetText(m: Monitor): string {
         <thead><tr><th>监控</th><th>类型</th><th>状态</th><th>探测范围</th><th>最近检查</th></tr></thead>
         <tbody>
           <tr v-for="monitor in monitors" :key="monitor.id">
-            <td><div class="monitor-name">{{ monitor.name }}</div><div class="target">{{ targetText(monitor) }}</div><Tags :tags="monitor.tags" /></td>
+            <td><a class="monitor-name monitor-link" :href="`/admin/dashboard/${encodeURIComponent(monitor.id)}`">{{ monitor.name }}</a><div class="target">{{ targetText(monitor) }}</div><Tags :tags="monitor.tags" /></td>
             <td><span class="tag">{{ typeLabel(monitor.type) }}</span> <span class="tag">{{ providerLabel(monitor.provider) }}</span></td>
             <td><StatusBadge :status="monitor.enabled ? monitor.currentStatus : 'paused'" /></td>
             <td>{{ monitor.provider === 'worker' ? '本地 Worker' : `${monitor.globalpingLocations.length} 个位置` }}</td>

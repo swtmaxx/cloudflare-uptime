@@ -1,0 +1,35 @@
+{
+  "name": "cloudflare-uptime-local",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "assets": {
+    "directory": "dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cloudflare-uptime-local",
+      "database_id": "432fe77f-b10a-4cfe-a251-db805f1423c5",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "QQ_GATEWAY", "class_name": "QQGateway" },
+      { "name": "UPTIME_REALTIME", "class_name": "MonitorRealtime" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["QQGateway"] },
+    { "tag": "v2" },
+    { "tag": "v3" },
+    { "tag": "v4", "new_sqlite_classes": ["MonitorRealtime"] }
+  ],
+  "rules": [
+    { "type": "Text", "globs": ["**/*.html"], "fallthrough": true }
+  ]
+}

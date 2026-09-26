@@ -29,6 +29,10 @@
       {
         "name": "QQ_GATEWAY",
         "class_name": "QQGateway"
+      },
+      {
+        "name": "UPTIME_REALTIME",
+        "class_name": "MonitorRealtime"
       }
     ]
   },
@@ -46,6 +50,12 @@
       "tag": "v3",
       "deleted_classes": [
         "KumaSocket"
+      ]
+    },
+    {
+      "tag": "v4",
+      "new_sqlite_classes": [
+        "MonitorRealtime"
       ]
     }
   ],

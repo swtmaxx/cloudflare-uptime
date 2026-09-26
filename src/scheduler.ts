@@ -3,6 +3,7 @@ import { getGlobalpingResults, startGlobalpingCheck } from './globalping';
 import { processMonitorStatus } from './notifications';
 import { checkWorkerMonitor } from './worker-check';
 import { ProviderError, type ParsedProbeResult } from './provider';
+import { broadcastRealtime, realtimeEvent } from './realtime';
 import type { Env, Monitor, ProbeNode } from './types';
 
 function monitorStatus(successes: number, failures: number): Monitor['currentStatus'] {
@@ -18,6 +19,7 @@ async function markUnknown(env: Env, monitorId: string, checkedAt: string, reaso
      SET current_status = 'unknown', last_checked_at = ?1, updated_at = ?1
      WHERE id = ?2`,
   ).bind(checkedAt, monitorId).run();
+  await broadcastRealtime(env, realtimeEvent('monitor', monitorId));
   if (reason) console.warn(`[scheduler] monitor ${monitorId}: ${reason}`);
 }
 
@@ -74,6 +76,7 @@ async function completeJob(env: Env, jobId: string, monitor: Monitor, results: P
     ).bind(status, checkedAt, monitor.id),
   );
   await env.DB.batch(statements);
+  await broadcastRealtime(env, realtimeEvent('monitor', monitor.id));
   try {
     await processMonitorStatus(env, monitor, monitor.currentStatus, status, checkedAt);
   } catch (error) {
@@ -137,6 +140,7 @@ export async function startMonitorJob(env: Env, monitorId: string): Promise<{ jo
          WHERE id = ?2`,
       ).bind(createdAt, monitorId),
     ]);
+    await broadcastRealtime(env, realtimeEvent('monitor', monitorId));
     return { jobId, error: message };
   }
 }
@@ -155,6 +159,7 @@ async function expireJob(env: Env, jobId: string, monitorId: string, reason: str
        WHERE id = ?2`,
     ).bind(timestamp, monitorId),
   ]);
+  await broadcastRealtime(env, realtimeEvent('monitor', monitorId));
 }
 
 export async function collectJob(env: Env, jobId: string): Promise<'completed' | 'pending' | 'expired' | 'missing'> {

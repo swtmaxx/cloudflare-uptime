@@ -1,3 +1,7 @@
+# License
+
+This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only). The frontend visual language is inspired by Uptime Kuma; it is an original implementation, with UI structure and backend integration ported from the AGPL-3.0 Uptime Kuma project, so the combined work is distributed under AGPL-3.0 as well.
+
 # Cloudflare Uptime
 
 一个从零设计的 Cloudflare Worker + D1 可用性监控系统。

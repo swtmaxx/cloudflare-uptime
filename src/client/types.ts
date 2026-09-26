@@ -1,5 +1,10 @@
 export type MonitorStatus = 'up' | 'degraded' | 'down' | 'unknown' | 'paused';
 export type ThemeMode = 'light' | 'dark' | 'auto';
+export type RealtimeScope = 'dashboard' | 'monitor' | 'history' | 'status-pages' | 'settings';
+export type RealtimeEvent =
+  | { version: 1; type: 'ready'; at: string }
+  | { version: 1; type: 'pong'; at: string }
+  | { version: 1; type: 'invalidate'; scope: RealtimeScope; monitorId?: string; at: string };
 
 export interface User {
   id: string;

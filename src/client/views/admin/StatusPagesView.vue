@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { api } from '../../api';
 import EmptyComponent from '../../components/Empty.vue';
 import PageHead from '../../components/PageHead.vue';
 import StatusBadge from '../../components/StatusBadge.vue';
 import StatusEditor from './StatusEditor.vue';
 import type { Monitor, StatusPage } from '../../types';
+import { onRealtimeEvent, realtimeScopeMatches } from '../../realtime';
 
 const props = withDefaults(defineProps<{ notify: (message: string, error?: boolean) => void; onEdit?: () => void }>(), { onEdit: undefined });
 
@@ -52,7 +53,14 @@ function openEditor(page: StatusPage | null) {
   if (props.onEdit) props.onEdit();
 }
 
-onMounted(load);
+let removeRealtimeListener: (() => void) | undefined;
+onMounted(() => {
+  void load();
+  removeRealtimeListener = onRealtimeEvent((event) => {
+    if (realtimeScopeMatches(event, ['status-pages'])) void load();
+  });
+});
+onBeforeUnmount(() => removeRealtimeListener?.());
 </script>
 
 <template>
